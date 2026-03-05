@@ -13,9 +13,9 @@ function pickNetwork(req: NextRequest): Network {
   return n === 'mainnet' ? 'mainnet' : 'testnet';
 }
 
-async function fetchJson(url: string, revalidateSec: number) {
+async function fetchJson(url: string) {
   const res = await fetch(url, {
-    next: { revalidate: revalidateSec },
+    next: { revalidate: 300 },
     headers: { accept: 'application/json' },
   });
   if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
@@ -28,33 +28,25 @@ function safeStr(v: any): string | undefined {
   return s.length ? s : undefined;
 }
 
+async function tryFetchValidatorInfoFromGitHub(network: Network, nodeId?: string) {
+  const nid = safeStr(nodeId);
+  if (!nid) return null;
+
+  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nid}.json`;
+  const res = await fetch(rawUrl, { next: { revalidate: 3600 } });
+  if (!res.ok) return null;
+  return res.json();
+}
+
 function normalizeProvider(v?: string) {
   if (!v) return undefined;
   return v.replace(/^AS\d+\s+/, '').trim() || undefined;
 }
 
-function pickIp(row: any): string | undefined {
-  return safeStr(row?.ip_address) ?? safeStr(row?.ip) ?? safeStr(row?.ipv4);
-}
-
-function pickNodeId(row: any): string | undefined {
-  return safeStr(row?.node_id) ?? safeStr(row?.nodeId);
-}
-
-function pickSecp(row: any): string | undefined {
-  return (
-    safeStr(row?.secp) ??
-    safeStr(row?.secp_key) ??
-    safeStr(row?.secpKey) ??
-    safeStr(row?.secp_pubkey) ??
-    safeStr(row?.secpPubkey) ??
-    safeStr(row?.auth_address) // інколи у тебе “secp” по факту EVM address — хай буде як fallback ключ для пошуку
-  );
-}
-
 function extractGeo(meta: any): { country?: string; city?: string; provider?: string } {
   const country =
     safeStr(meta?.country) ??
+    safeStr(meta?.country_code) ??
     safeStr(meta?.geo?.country) ??
     safeStr(meta?.geolocation?.country) ??
     safeStr(meta?.location?.country);
@@ -79,7 +71,21 @@ function extractGeo(meta: any): { country?: string; city?: string; provider?: st
 
 type IpGeo = { country?: string; city?: string; provider?: string };
 
-function makeDisplayName(merged: any, fallbackId: number) {
+function pickIp(row: any): string | undefined {
+  return safeStr(row?.ip_address) ?? safeStr(row?.ip) ?? safeStr(row?.ipv4);
+}
+
+function normalizeSecp(row: any): string | undefined {
+  return (
+    safeStr(row?.secp) ??
+    safeStr(row?.secp_key) ??
+    safeStr(row?.secpKey) ??
+    safeStr(row?.secp_pubkey) ??
+    safeStr(row?.secpPubkey)
+  );
+}
+
+function makeDisplayName(merged: any, id: number) {
   const name =
     safeStr(merged?.name) ??
     safeStr(merged?.displayName) ??
@@ -97,48 +103,108 @@ function makeDisplayName(merged: any, fallbackId: number) {
 
   if (Number.isFinite(vi)) return `Validator #${vi}`;
 
-  const nodeId = pickNodeId(merged);
+  const nodeId = safeStr(merged?.node_id);
   if (nodeId) return `Validator ${nodeId.slice(0, 10)}…`;
 
-  return `Validator #${fallbackId}`;
+  return `Validator #${id}`;
 }
 
-async function tryFetchValidatorInfoFromGitHub(network: Network, nodeId?: string) {
-  if (!nodeId) return null;
-  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nodeId}.json`;
-  const res = await fetch(rawUrl, { next: { revalidate: 3600 } });
-  if (!res.ok) return null;
-  return res.json();
+function makeFallbackKey(merged: any, id: number): string | undefined {
+  return (
+    normalizeSecp(merged) ??
+    safeStr(merged?.auth_address) ??
+    safeStr(merged?.node_id) ??
+    (typeof merged?.val_index === 'number' ? String(merged.val_index) : undefined) ??
+    String(id)
+  );
+}
+
+// IMPORTANT: gmonads може мати id або val_index. Ця функція дістає “універсальний” numeric key.
+function getNumericId(x: any): number | undefined {
+  if (typeof x?.id === 'number') return x.id;
+  if (typeof x?.val_index === 'number') return x.val_index;
+  if (typeof x?.id === 'string' && x.id.trim() && Number.isFinite(Number(x.id))) return Number(x.id);
+  if (typeof x?.val_index === 'string' && x.val_index.trim() && Number.isFinite(Number(x.val_index)))
+    return Number(x.val_index);
+  return undefined;
+}
+
+function isActive(v: any): boolean {
+  const tRaw = v?.validator_set_type;
+  if (tRaw === undefined || tRaw === null || tRaw === '') return true; // якщо поля нема, не ріжемо
+  const t = String(tRaw).trim().toLowerCase();
+  return t === 'active';
+}
+
+function rowQuality(r: {
+  country?: string;
+  city?: string;
+  provider?: string;
+  nodeId?: string;
+  secp?: string;
+  merged?: any;
+}) {
+  // що більше “важливих” полів заповнено, то краще
+  let q = 0;
+  if (r.country) q += 3;
+  if (r.city) q += 2;
+  if (r.provider) q += 2;
+  if (r.nodeId) q += 2;
+  if (r.secp) q += 1;
+  const ts = r.merged?.timestamp ? Date.parse(r.merged.timestamp) : 0;
+  if (Number.isFinite(ts) && ts > 0) q += Math.min(3, Math.floor(ts / 1_000_000_000)); // слабкий буст за “свіжість”
+  return q;
+}
+
+function dedupeById<T extends { id: number }>(rows: T[]) {
+  const map = new Map<number, T>();
+  for (const r of rows) {
+    const prev = map.get(r.id);
+    if (!prev) {
+      map.set(r.id, r);
+      continue;
+    }
+    // лишаємо запис з кращою якістю
+    const keep = rowQuality(r as any) >= rowQuality(prev as any) ? r : prev;
+    map.set(r.id, keep);
+  }
+  return Array.from(map.values());
 }
 
 export async function GET(req: NextRequest) {
   const network = pickNetwork(req);
 
   const [epoch, geolocs, metadata] = await Promise.all([
-    fetchJson(`${GMONADS_BASE}/validators/epoch?network=${network}`, 300),
-    fetchJson(`${GMONADS_BASE}/validators/geolocations?network=${network}`, 3600),
-    fetchJson(`${GMONADS_BASE}/validators/metadata?network=${network}`, 3600),
+    fetchJson(`${GMONADS_BASE}/validators/epoch?network=${network}`),
+    fetchJson(`${GMONADS_BASE}/validators/geolocations?network=${network}`),
+    fetchJson(`${GMONADS_BASE}/validators/metadata?network=${network}`),
   ]);
 
   const epochData = (epoch?.data ?? []) as GmonadsValidator[];
   const geolocData = (geolocs?.data ?? []) as any[];
   const metaData = (metadata?.data ?? []) as any[];
 
-  const byIdGeo = new Map<number, any>();
-  for (const g of geolocData) if (typeof g?.id === 'number') byIdGeo.set(g.id, g);
+  const byKeyGeo = new Map<number, any>();
+  for (const g of geolocData) {
+    const k = getNumericId(g);
+    if (typeof k === 'number') byKeyGeo.set(k, g);
+  }
 
-  const byIdMeta = new Map<number, any>();
-  for (const m of metaData) if (typeof m?.id === 'number') byIdMeta.set(m.id, m);
+  const byKeyMeta = new Map<number, any>();
+  for (const m of metaData) {
+    const k = getNumericId(m);
+    if (typeof k === 'number') byKeyMeta.set(k, m);
+  }
 
-  // IPINFO fallback (опційно)
   const ipCache = new Map<string, IpGeo>();
+
   async function geoFromIp(ip?: string): Promise<IpGeo> {
     if (!ip) return {};
     if (ipCache.has(ip)) return ipCache.get(ip)!;
 
-    const token = process.env.IPINFO_TOKEN;
+    const token = safeStr(process.env.IPINFO_TOKEN);
     if (!token) {
-      const empty = {};
+      const empty: IpGeo = {};
       ipCache.set(ip, empty);
       return empty;
     }
@@ -149,12 +215,13 @@ export async function GET(req: NextRequest) {
     });
 
     if (!res.ok) {
-      const empty = {};
+      const empty: IpGeo = {};
       ipCache.set(ip, empty);
       return empty;
     }
 
     const j = await res.json();
+
     const out: IpGeo = {
       country: safeStr(j?.country),
       city: safeStr(j?.city),
@@ -165,45 +232,36 @@ export async function GET(req: NextRequest) {
     return out;
   }
 
-  // 1) мердж + 2) фільтр тільки active + 3) dedupe по id (беремо найсвіжіший timestamp)
-  type Row = {
-    id: number;
-    nodeId?: string;
-    secp?: string;
-    bls?: string;
-    country?: string;
-    city?: string;
-    provider?: string;
-    merged: any;
-    ts?: number;
-  };
+  // 1) active
+  const activeEpoch = epochData.filter(isActive);
 
-  const rowsAll: Row[] = await Promise.all(
-    epochData.map(async (v) => {
-      const geo = byIdGeo.get(v.id);
-      const meta = byIdMeta.get(v.id);
+  // 2) baseRows
+  const baseRowsRaw = await Promise.all(
+    activeEpoch.map(async (v: any) => {
+      const key = getNumericId(v);
+
+      const geo = typeof key === 'number' ? byKeyGeo.get(key) : undefined;
+      const meta = typeof key === 'number' ? byKeyMeta.get(key) : undefined;
+
       const merged = { ...v, ...meta, ...geo };
 
-      const nodeId = pickNodeId(merged);
-      const secp = pickSecp(merged);
+      const extracted = extractGeo(merged);
+
+      const ip = pickIp(merged);
+      const needsIp = !extracted.country || !extracted.city || !extracted.provider;
+      const ipGeo = needsIp ? await geoFromIp(ip) : {};
+
+      const country = extracted.country ?? ipGeo.country;
+      const city = extracted.city ?? ipGeo.city;
+      const provider = extracted.provider ?? ipGeo.provider;
+
+      const nodeId = safeStr(merged?.node_id) ?? safeStr((v as any)?.node_id);
+
+      const secp = normalizeSecp(merged) ?? safeStr(merged?.auth_address) ?? undefined;
       const bls = safeStr(merged?.bls) ?? safeStr((v as any)?.bls);
 
-      const tsRaw = safeStr(merged?.timestamp);
-      const ts = tsRaw ? Date.parse(tsRaw) : undefined;
-
-      let { country, city, provider } = extractGeo(merged);
-
-      // якщо gmonads не дав гео — пробуємо по IP
-      if (!country || !city || !provider) {
-        const ip = pickIp(merged);
-        const ipGeo = await geoFromIp(ip);
-        country = country ?? ipGeo.country;
-        city = city ?? ipGeo.city;
-        provider = provider ?? ipGeo.provider;
-      }
-
       return {
-        id: v.id,
+        id: typeof key === 'number' ? key : (typeof v?.id === 'number' ? v.id : 0),
         nodeId,
         secp,
         bls,
@@ -211,28 +269,12 @@ export async function GET(req: NextRequest) {
         city,
         provider,
         merged,
-        ts,
       };
     })
   );
 
-  // тільки active (це має наблизити total до 231/187)
-  const rowsActive = rowsAll.filter((r) => safeStr(r.merged?.validator_set_type) === 'active');
-
-  // dedupe by id
-  const dedup = new Map<number, Row>();
-  for (const r of rowsActive) {
-    const prev = dedup.get(r.id);
-    if (!prev) {
-      dedup.set(r.id, r);
-      continue;
-    }
-    const a = prev.ts ?? -1;
-    const b = r.ts ?? -1;
-    if (b > a) dedup.set(r.id, r);
-  }
-
-  const baseRows = Array.from(dedup.values());
+  // 3) dedupe
+  const baseRows = dedupeById(baseRowsRaw).filter(r => r.id !== 0);
 
   const counts = buildCounts(baseRows);
 
@@ -249,9 +291,11 @@ export async function GET(req: NextRequest) {
         counts,
       });
 
+      const fallbackKey = makeFallbackKey(row.merged, row.id);
+
       return {
         id: row.id,
-        secp: row.secp,
+        secp: row.secp ?? fallbackKey,
         bls: row.bls,
 
         displayName,
