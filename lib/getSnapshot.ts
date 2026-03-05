@@ -1,7 +1,7 @@
 // lib/getSnapshot.ts
 
 import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/lib/types';
-import { buildCounts, scoreValidator } from '@/lib/scoring';  // припускаю, що ці функції в тебе є
+import { buildCounts, scoreValidator } from '@/lib/scoring';
 
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
@@ -18,6 +18,16 @@ function safeStr(v: any): string | undefined {
   if (typeof v !== 'string') return undefined;
   const s = v.trim();
   return s.length ? s : undefined;
+}
+
+async function tryFetchValidatorInfoFromGitHub(network: Network, nodeId?: string) {
+  const nid = safeStr(nodeId);
+  if (!nid) return null;
+
+  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nid}.json`;
+  const res = await fetch(rawUrl, { next: { revalidate: 3600 } });
+  if (!res.ok) return null;
+  return res.json();
 }
 
 function normalizeProvider(v?: string) {
@@ -51,6 +61,8 @@ function extractGeo(meta: any): { country?: string; city?: string; provider?: st
   return { country, city, provider: normalizeProvider(providerRaw) };
 }
 
+type IpGeo = { country?: string; city?: string; provider?: string };
+
 function pickIp(row: any): string | undefined {
   return safeStr(row?.ip_address) ?? safeStr(row?.ip) ?? safeStr(row?.ipv4);
 }
@@ -74,8 +86,12 @@ function makeDisplayName(merged: any, id: number) {
 
   if (name) return name;
 
-  const vi = typeof merged?.val_index === 'number' ? merged.val_index :
-             typeof merged?.val_index === 'string' ? Number(merged.val_index) : undefined;
+  const vi =
+    typeof merged?.val_index === 'number'
+      ? merged.val_index
+      : typeof merged?.val_index === 'string'
+        ? Number(merged.val_index)
+        : undefined;
 
   if (Number.isFinite(vi)) return `Validator #${vi}`;
 
@@ -83,6 +99,16 @@ function makeDisplayName(merged: any, id: number) {
   if (nodeId) return `Validator ${nodeId.slice(0, 10)}…`;
 
   return `Validator #${id}`;
+}
+
+function makeFallbackKey(merged: any, id: number): string | undefined {
+  return (
+    normalizeSecp(merged) ??
+    safeStr(merged?.auth_address) ??
+    safeStr(merged?.node_id) ??
+    (typeof merged?.val_index === 'number' ? String(merged.val_index) : undefined) ??
+    String(id)
+  );
 }
 
 function getNumericId(x: any): number | undefined {
@@ -101,8 +127,38 @@ function isActive(v: any): boolean {
   return t === 'active';
 }
 
-// ... (додай сюди інші функції, які були в route.ts: tryFetchValidatorInfoFromGitHub, geoFromIp, dedupeById, rowQuality тощо)
-// Я не копіюю їх усі, бо вони довгі, але ти повинен перенести їх з route.ts без змін (крім видалення req: NextRequest)
+function rowQuality(r: {
+  country?: string;
+  city?: string;
+  provider?: string;
+  nodeId?: string;
+  secp?: string;
+  merged?: any;
+}) {
+  let q = 0;
+  if (r.country) q += 3;
+  if (r.city) q += 2;
+  if (r.provider) q += 2;
+  if (r.nodeId) q += 2;
+  if (r.secp) q += 1;
+  const ts = r.merged?.timestamp ? Date.parse(r.merged.timestamp) : 0;
+  if (Number.isFinite(ts) && ts > 0) q += Math.min(3, Math.floor(ts / 1_000_000_000));
+  return q;
+}
+
+function dedupeById<T extends { id: number }>(rows: T[]) {
+  const map = new Map<number, T>();
+  for (const r of rows) {
+    const prev = map.get(r.id);
+    if (!prev) {
+      map.set(r.id, r);
+      continue;
+    }
+    const keep = rowQuality(r as any) >= rowQuality(prev as any) ? r : prev;
+    map.set(r.id, keep);
+  }
+  return Array.from(map.values());
+}
 
 export async function computeSnapshot(network: Network): Promise<Snapshot> {
   const [epoch, geolocs, metadata] = await Promise.all([
@@ -115,12 +171,102 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   const geolocData = (geolocs?.data ?? []) as any[];
   const metaData = (metadata?.data ?? []) as any[];
 
-  // ... (весь попередній код: activeEpoch, baseRowsRaw, baseRows)
+  const byKeyGeo = new Map<number, any>();
+  for (const g of geolocData) {
+    const k = getNumericId(g);
+    if (typeof k === 'number') byKeyGeo.set(k, g);
+  }
 
-  // Обов'язково після dedupe
+  const byKeyMeta = new Map<number, any>();
+  for (const m of metaData) {
+    const k = getNumericId(m);
+    if (typeof k === 'number') byKeyMeta.set(k, m);
+  }
+
+  const ipCache = new Map<string, IpGeo>();
+
+  async function geoFromIp(ip?: string): Promise<IpGeo> {
+    if (!ip) return {};
+    if (ipCache.has(ip)) return ipCache.get(ip)!;
+
+    const token = safeStr(process.env.IPINFO_TOKEN);
+    if (!token) {
+      const empty: IpGeo = {};
+      ipCache.set(ip, empty);
+      return empty;
+    }
+
+    const res = await fetch(`https://ipinfo.io/${ip}?token=${token}`, {
+      cache: 'no-store',
+      next: { revalidate: 86400 },
+    });
+
+    if (!res.ok) {
+      const empty: IpGeo = {};
+      ipCache.set(ip, empty);
+      return empty;
+    }
+
+    const j = await res.json();
+
+    const out: IpGeo = {
+      country: safeStr(j?.country),
+      city: safeStr(j?.city),
+      provider: normalizeProvider(safeStr(j?.org) ?? safeStr(j?.hostname)),
+    };
+
+    ipCache.set(ip, out);
+    return out;
+  }
+
+  // 1) active validators
+  const activeEpoch = epochData.filter(isActive);
+
+  // 2) base rows with geo + ip fallback
+  const baseRowsRaw = await Promise.all(
+    activeEpoch.map(async (v: any) => {
+      const key = getNumericId(v);
+
+      const geo = typeof key === 'number' ? byKeyGeo.get(key) : undefined;
+      const meta = typeof key === 'number' ? byKeyMeta.get(key) : undefined;
+
+      const merged = { ...v, ...meta, ...geo };
+
+      const extracted = extractGeo(merged);
+
+      const ip = pickIp(merged);
+      const needsIp = !extracted.country || !extracted.city || !extracted.provider;
+      const ipGeo = needsIp ? await geoFromIp(ip) : {};
+
+      const country = extracted.country ?? ipGeo.country;
+      const city = extracted.city ?? ipGeo.city;
+      const provider = extracted.provider ?? ipGeo.provider;
+
+      const nodeId = safeStr(merged?.node_id) ?? safeStr((v as any)?.node_id);
+
+      const secp = normalizeSecp(merged) ?? safeStr(merged?.auth_address) ?? undefined;
+      const bls = safeStr(merged?.bls) ?? safeStr((v as any)?.bls);
+
+      return {
+        id: typeof key === 'number' ? key : (typeof v?.id === 'number' ? v.id : 0),
+        nodeId,
+        secp,
+        bls,
+        country,
+        city,
+        provider,
+        merged,
+      };
+    })
+  );
+
+  // 3) deduplicate
+  const baseRows = dedupeById(baseRowsRaw).filter(r => r.id !== 0);
+
+  // 4) counts
   const counts = buildCounts(baseRows);
 
-  // Потім збагачення даних з GitHub + scoring
+  // 5) enrich with GitHub info + scoring
   const enriched: EnrichedValidator[] = await Promise.all(
     baseRows.map(async (row) => {
       const gh = await tryFetchValidatorInfoFromGitHub(network, row.nodeId);
@@ -131,7 +277,7 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         country: row.country,
         city: row.city,
         provider: row.provider,
-        counts,   // ← counts вже існує
+        counts,
       });
 
       const fallbackKey = makeFallbackKey(row.merged, row.id);
@@ -140,27 +286,22 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         id: row.id,
         secp: row.secp ?? fallbackKey,
         bls: row.bls,
-
         displayName,
         website: safeStr(gh?.website) ?? safeStr(row.merged?.website),
         description: safeStr(gh?.description) ?? safeStr(row.merged?.description),
         logo: safeStr(gh?.logo) ?? safeStr(row.merged?.logo),
         x: safeStr(gh?.x) ?? safeStr(row.merged?.x),
-
         country: row.country ?? 'Unknown',
         city: row.city ?? 'Unknown',
         provider: row.provider ?? 'Unknown',
-
         scores,
         raw: { gmonads: row.merged, github: gh ?? undefined },
       };
     })
   );
 
-  // Сортування
   enriched.sort((a, b) => b.scores.total - a.scores.total);
 
-  // Тепер створюємо snapshot — тільки після enriched та counts
   const snapshot: Snapshot = {
     network,
     generatedAt: new Date().toISOString(),
