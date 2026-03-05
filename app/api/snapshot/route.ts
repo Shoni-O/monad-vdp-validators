@@ -22,9 +22,9 @@ async function fetchJson(url: string) {
   return res.json();
 }
 
-async function tryFetchValidatorInfoFromGitHub(network: Network, secp?: string) {
-  if (!secp) return null;
-  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${secp}.json`;
+async function tryFetchValidatorInfoFromGitHub(network: Network, nodeId?: string) {
+  if (!nodeId) return null;
+  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nodeId}.json`;
   const res = await fetch(rawUrl, { next: { revalidate: 3600 } });
   if (!res.ok) return null;
   return res.json();
@@ -180,49 +180,41 @@ export async function GET(req: NextRequest) {
   }
 
   // базові рядки робимо async, щоб одразу підставити geo/provider по IP
-  const baseRows = await Promise.all(
-    epochData.map(async (v) => {
-      const geo = byIdGeo.get(v.id);
-      const meta = byIdMeta.get(v.id);
+  const baseRows = epochData.map(v => {
+  const geo = byIdGeo.get(v.id);
+  const meta = byIdMeta.get(v.id);
+  const merged = { ...v, ...meta, ...geo };
 
-      const merged = { ...v, ...meta, ...geo };
+  const { country, city, provider } = extractGeo(merged);
 
-      let { country, city, provider } = extractGeo(merged);
+  const nodeId =
+    (typeof merged?.node_id === 'string' && merged.node_id.trim().length ? merged.node_id.trim() : undefined) ??
+    (typeof (v as any)?.node_id === 'string' && (v as any).node_id.trim().length ? (v as any).node_id.trim() : undefined);
 
-      const ip = pickIp(merged);
-      if (!country || !city || !provider) {
-        const ipGeo = await geoFromIp(ip);
-        country = country ?? ipGeo.country;
-        city = city ?? ipGeo.city;
-        provider = provider ?? ipGeo.provider;
-      }
-
-      const secp = normalizeSecp(merged);
-      const fallbackKey = makeFallbackKey(merged, v.id);
-
-      return {
-        id: v.id,
-        secp,
-        bls: safeStr(merged?.bls) ?? v.bls,
-        country,
-        city,
-        provider,
-        ip,
-        merged,
-        fallbackKey,
-      };
-    })
-  );
+  return {
+    id: v.id,
+    nodeId,
+    secp: merged.secp ?? v.secp,
+    bls: merged.bls ?? v.bls,
+    country,
+    city,
+    provider,
+    merged,
+  };
+});
 
   const counts = buildCounts(baseRows);
 
   const enriched: EnrichedValidator[] = await Promise.all(
     baseRows.map(async (row) => {
       // GitHub validator-info працює тільки якщо є справжній secp key
-      const gh = await tryFetchValidatorInfoFromGitHub(network, row.secp);
+      const gh = await tryFetchValidatorInfoFromGitHub(network, row.nodeId);
 
       const displayName =
-        safeStr(gh?.name) ?? makeDisplayName(network, row.merged, row.id);
+      gh?.name ??
+      row.merged?.name ??
+      row.merged?.validator ??
+      `Validator #${row.id}`;
 
       const scores = scoreValidator({
         country: row.country,
