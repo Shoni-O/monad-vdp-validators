@@ -1,3 +1,5 @@
+import type { Badge, Scores } from './types';
+
 function safeKey(v?: string) {
   const s = (v ?? '').trim();
   return s.length ? s : 'Unknown';
@@ -12,6 +14,12 @@ function logPenalty(count: number) {
   // 2 -> маленький штраф
   // 10+ -> більший штраф, але не безмежний
   return Math.log(Math.max(1, count));
+}
+
+function computeBadge(total: number): Badge {
+  if (total >= 80) return 'unique';
+  if (total >= 55) return 'ok';
+  return 'saturated';
 }
 
 export function buildCounts(items: Array<{ country?: string; city?: string; provider?: string }>) {
@@ -41,7 +49,7 @@ export function scoreValidator(params: {
     byCity: Record<string, number>;
     byProvider: Record<string, number>;
   };
-}) {
+}): Scores {
   const countryKey = safeKey(params.country);
   const cityKey = safeKey(params.city);
   const providerKey = safeKey(params.provider);
@@ -58,12 +66,12 @@ export function scoreValidator(params: {
 
   const total = clamp(geoScore * 0.55 + providerScore * 0.45, 0, 100);
 
-  const badge = total >= 80 ? 'unique' : total >= 55 ? 'ok' : 'saturated';
+  const roundedTotal = Math.round(total);
 
   return {
     geo: Math.round(geoScore),
     provider: Math.round(providerScore),
-    total: Math.round(total),
-    badge,
+    total: roundedTotal,
+    badge: computeBadge(roundedTotal),
   };
 }

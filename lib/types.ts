@@ -1,5 +1,14 @@
 export type Network = 'testnet' | 'mainnet';
 
+export type Badge = 'unique' | 'ok' | 'saturated';
+
+export type Scores = {
+  geo: number;
+  provider: number;
+  total: number;
+  badge: Badge;
+};
+
 export type GmonadsValidator = {
   id: number;
   secp?: string;
@@ -24,12 +33,7 @@ export type EnrichedValidator = {
   city?: string;
   provider?: string;
 
-  scores: {
-    geo: number;
-    provider: number;
-    total: number;
-    badge: 'unique' | 'ok' | 'saturated';
-  };
+  scores: Scores;
 
   raw: {
     gmonads: any;
