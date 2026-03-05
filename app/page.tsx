@@ -3,15 +3,18 @@ import { headers } from 'next/headers';
 
 export const dynamic = 'force-dynamic';
 
+// page.tsx — у функції getSnapshot
 async function getSnapshot(network: Network): Promise<Snapshot> {
-  const base = process.env.NEXT_PUBLIC_BASE_URL;
-  if (!base) throw new Error('NEXT_PUBLIC_BASE_URL is not set');
-
   const res = await fetch(`/api/snapshot?network=${network}`, {
     cache: 'no-store',
+    // headers: { ... } якщо треба, але зазвичай не потрібно
   });
 
-  if (!res.ok) throw new Error('Failed to load snapshot');
+  if (!res.ok) {
+    console.error('Snapshot fetch failed:', res.status, await res.text()); // ← додай це для логів
+    throw new Error(`Failed to load snapshot: ${res.status}`);
+  }
+
   const json = await res.json();
   return json.data as Snapshot;
 }
