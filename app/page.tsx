@@ -12,7 +12,7 @@ function getNetworkFromHost(host?: string | null): Network {
   if (h.startsWith('monad-validators-testnet.')) return 'testnet';
   if (h.startsWith('monad-validators.')) return 'mainnet';
 
-  return 'testnet'; // fallback
+  return 'testnet';
 }
 
 function topEntries(map: Record<string, number>, limit = 10) {
@@ -25,26 +25,55 @@ function normText(s: string) {
   return s.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function normCountryKey(s?: string) {
-  const raw = (s ?? 'Unknown').trim();
-  const v = normText(raw);
+/**
+ * Country key strategy:
+ * - If value looks like ISO2 (2 letters), key = UPPER ISO2
+ * - Otherwise key = normalized country name (lowercase)
+ */
+function countryKey(v?: string) {
+  const raw = (v ?? '').trim();
+  if (!raw) return 'UNKNOWN';
 
-  // ISO2 коди тримаємо у верхньому регістрі (CA, US)
-  if (/^[a-z]{2}$/.test(v)) return v.toUpperCase();
+  const t = raw.trim();
+  if (t.length === 2 && /^[a-zA-Z]{2}$/.test(t)) return t.toUpperCase();
 
-  // Назви країни лишаємо як нормалізований текст
-  return v;
+  return normText(t) || 'unknown';
 }
 
-function normProviderKey(s?: string) {
-  const raw = (s ?? 'Unknown').trim();
+/**
+ * Pretty label from ISO2 code if possible.
+ * If not ISO2, return original-ish normalized title.
+ */
+const regionNames =
+  typeof Intl !== 'undefined' && 'DisplayNames' in Intl
+    ? new Intl.DisplayNames(['en'], { type: 'region' })
+    : null;
 
-  // прибираємо AS12345 + зайві символи, вирівнюємо пробіли
+function countryLabelFromKey(key: string) {
+  if (!key) return 'Unknown';
+
+  // ISO2
+  if (key.length === 2 && /^[A-Z]{2}$/.test(key)) {
+    return regionNames?.of(key) ?? key;
+  }
+
+  // name fallback (make it a bit nicer)
+  const s = key.trim();
+  if (!s) return 'Unknown';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function providerKey(v?: string) {
+  const raw = (v ?? '').trim();
+  if (!raw) return 'unknown';
+
   const noAs = raw.replace(/^AS\d+\s+/i, '');
-  return normText(noAs)
-    .replace(/[.,()]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim() || 'unknown';
+  return (
+    normText(noAs)
+      .replace(/[.,()]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim() || 'unknown'
+  );
 }
 
 export default async function Page({
@@ -76,44 +105,29 @@ export default async function Page({
         <p className="text-lg mb-6">
           Failed to load validator data for <strong>{network}</strong>.
         </p>
-        <p className="text-sm text-gray-600 mb-4">
-          {error || 'Please check server logs or try again later.'}
-        </p>
+        <p className="text-sm text-gray-600 mb-4">{error || 'Please check server logs or try again later.'}</p>
         <div className="flex justify-center gap-4">
-          <a href={mainnetUrl} className="underline text-blue-600">Mainnet</a>
-          <a href={testnetUrl} className="underline text-blue-600">Testnet</a>
+          <a href={mainnetUrl} className="underline text-blue-600">
+            Mainnet
+          </a>
+          <a href={testnetUrl} className="underline text-blue-600">
+            Testnet
+          </a>
         </div>
       </main>
     );
   }
 
   const q = normText(searchParams.q ?? '');
-  const countryFilterKey = (searchParams.country ?? '').trim();   // тут буде ключ
-  const providerFilterKey = (searchParams.provider ?? '').trim(); // тут буде ключ
+  const countryFilterKey = (searchParams.country ?? '').trim(); // key
+  const providerFilterKey = (searchParams.provider ?? '').trim(); // key
 
-  // Покращена фільтрація (стійка до регістру та пробілів)
-  const filtered = snapshot.validators.filter((v) => {
-    const matchesSearch =
-      !q ||
-      normText(v.displayName).includes(q) ||
-      normText(v.secp ?? '').includes(q) ||
-      String(v.id).includes(q);
-
-    const vCountryKey = normCountryKey(v.country ?? 'Unknown');
-    const matchesCountry = !countryFilterKey || vCountryKey === countryFilterKey;
-
-    const vProviderKey = normProviderKey(v.provider ?? 'Unknown');
-    const matchesProvider = !providerFilterKey || vProviderKey === providerFilterKey;
-
-    return matchesSearch && matchesCountry && matchesProvider;
-  });
-
-  // Списки для селектів — точні ключі з даних
+  // Build options from validators to guarantee exact match with filter keys
   const countryOptions = Array.from(
     new Map(
       snapshot.validators.map((v) => {
-        const label = (v.country ?? 'Unknown').trim() || 'Unknown';
-        const key = normCountryKey(label);
+        const key = countryKey(v.country);
+        const label = countryLabelFromKey(key);
         return [key, label] as const;
       })
     ).entries()
@@ -124,14 +138,30 @@ export default async function Page({
   const providerOptions = Array.from(
     new Map(
       snapshot.validators.map((v) => {
+        const key = providerKey(v.provider);
         const label = (v.provider ?? 'Unknown').trim() || 'Unknown';
-        const key = normProviderKey(label);
         return [key, label] as const;
       })
     ).entries()
   )
     .map(([key, label]) => ({ key, label }))
     .sort((a, b) => a.label.localeCompare(b.label));
+
+  const filtered = snapshot.validators.filter((v) => {
+    const matchesSearch =
+      !q ||
+      normText(v.displayName).includes(q) ||
+      normText(v.secp ?? '').includes(q) ||
+      String(v.id).includes(q);
+
+    const vCountryKey = countryKey(v.country);
+    const matchesCountry = !countryFilterKey || vCountryKey === countryFilterKey;
+
+    const vProviderKey = providerKey(v.provider);
+    const matchesProvider = !providerFilterKey || vProviderKey === providerFilterKey;
+
+    return matchesSearch && matchesCountry && matchesProvider;
+  });
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
@@ -244,9 +274,7 @@ export default async function Page({
               <tr key={v.id} className="border-t">
                 <td className="p-3">
                   <div className="flex items-center gap-2">
-                    {v.logo ? (
-                      <img src={v.logo} alt="" className="w-6 h-6 rounded" />
-                    ) : null}
+                    {v.logo ? <img src={v.logo} alt="" className="w-6 h-6 rounded" /> : null}
                     <div className="flex flex-col">
                       <span className="font-medium">{v.displayName}</span>
                       <span className="opacity-70 text-xs">{v.secp ? v.secp : `id ${v.id}`}</span>
@@ -290,23 +318,30 @@ export default async function Page({
         </table>
       </section>
 
-      {/* DEBUG БЛОК — обов'язково подивись після тесту */}
+      {/* DEBUG (видали після перевірки) */}
       <div className="bg-yellow-50 border border-yellow-400 p-4 rounded mt-6 text-sm">
-        <strong>Debug (видали цей блок після перевірки):</strong><br />
-        Мережа: {network}<br />
-        Фільтр країни key: "{countryFilterKey}"<br />
-        Фільтр провайдера key: "{providerFilterKey}"<br />
-        Перший валідатор country: "{snapshot.validators[0]?.country}" → key "{normCountryKey(snapshot.validators[0]?.country)}"<br />
-        Перший валідатор provider: "{snapshot.validators[0]?.provider}" → key "{normProviderKey(snapshot.validators[0]?.provider)}"<br />
-        Пошук: "{q}"<br />
-        <strong>Знайдено після фільтра: {filtered.length} з {snapshot.validators.length}</strong><br />
-        Чи є "Canada" в списку країн? {countryOptions.some(o => o.key === 'canada') ? 'Так' : 'Ні'}<br />
-        Приклади перших 5 країн у даних: {snapshot.validators.slice(0, 5).map(v => v.country ?? 'Unknown').join(', ')}
+        <strong>Debug (видали цей блок після перевірки):</strong>
+        <br />
+        Мережа: {network}
+        <br />
+        Search: "{q}"
+        <br />
+        Country filter key: "{countryFilterKey}"
+        <br />
+        Provider filter key: "{providerFilterKey}"
+        <br />
+        First country raw: "{snapshot.validators[0]?.country ?? 'Unknown'}" → "{countryKey(snapshot.validators[0]?.country)}"
+        <br />
+        First provider raw: "{snapshot.validators[0]?.provider ?? 'Unknown'}" → "{providerKey(snapshot.validators[0]?.provider)}"
+        <br />
+        <strong>
+          Знайдено після фільтра: {filtered.length} з {snapshot.validators.length}
+        </strong>
+        <br />
+        Перші 10 country keys: {countryOptions.slice(0, 10).map((o) => o.key).join(', ')}
       </div>
 
-      <footer className="text-xs opacity-70 text-center mt-8">
-        Data sources: gmonads public API and monad-developers validator-info.
-      </footer>
+      <footer className="text-xs opacity-70 text-center mt-8">Data sources: gmonads public API and monad-developers validator-info.</footer>
     </main>
   );
 }

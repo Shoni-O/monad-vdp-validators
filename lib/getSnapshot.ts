@@ -37,10 +37,13 @@ function normalizeProvider(v?: string) {
 
 function extractGeo(meta: any): { country?: string; city?: string; provider?: string } {
   const country =
-    safeStr(meta?.country) ??
     safeStr(meta?.country_code) ??
+    safeStr(meta?.country) ??
+    safeStr(meta?.geo?.country_code) ??
     safeStr(meta?.geo?.country) ??
+    safeStr(meta?.geolocation?.country_code) ??
     safeStr(meta?.geolocation?.country) ??
+    safeStr(meta?.location?.country_code) ??
     safeStr(meta?.location?.country);
 
   const city =
