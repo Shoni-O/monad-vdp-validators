@@ -79,18 +79,21 @@ export default async function Page({
 
     const matchesCountry =
       !countryFilter ||
-      (v.country ?? 'Unknown').trim() === countryFilter.trim();
+      (v.country ?? 'Unknown').trim().toLowerCase() === countryFilter.trim().toLowerCase();
 
     const matchesProvider =
       !providerFilter ||
-      (v.provider ?? 'Unknown').trim() === providerFilter.trim();
+      (v.provider ?? 'Unknown').trim().toLowerCase() === providerFilter.trim().toLowerCase();
 
     return matchesSearch && matchesCountry && matchesProvider;
   });
 
   // Повний список для селектів
-  const countries = Object.keys(snapshot.counts.byCountry).sort();
-  const providers = Object.keys(snapshot.counts.byProvider).sort();
+  const countries = Object.keys(snapshot.counts.byCountry)
+    .sort((a, b) => a.localeCompare(b));   // алфавітне сортування
+
+  const providers = Object.keys(snapshot.counts.byProvider)
+    .sort((a, b) => a.localeCompare(b));
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
@@ -122,7 +125,7 @@ export default async function Page({
             <select name="country" defaultValue={countryFilter} className="border rounded px-2 py-1">
               <option value="">All</option>
               {countries.map((c) => (
-                <option key={c} value={c}>
+                <option key={c} value={c.toLowerCase()}>
                   {c}
                 </option>
               ))}
@@ -134,7 +137,7 @@ export default async function Page({
             <select name="provider" defaultValue={providerFilter} className="border rounded px-2 py-1">
               <option value="">All</option>
               {providers.map((p) => (
-                <option key={p} value={p}>
+                <option key={p} value={p.toLowerCase()}>
                   {p}
                 </option>
               ))}
