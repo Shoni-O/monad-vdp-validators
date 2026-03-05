@@ -65,25 +65,32 @@ export default async function Page({
     );
   }
 
-  // Нормальний рендер
   const q = (searchParams.q ?? '').toLowerCase().trim();
-  const countryFilter = (searchParams.country ?? '').trim();
-  const providerFilter = (searchParams.provider ?? '').trim();
 
-  const countries = Object.keys(snapshot.counts.byCountry).sort();
-  const providers = Object.keys(snapshot.counts.byProvider).sort();
+    const countryFilter = (searchParams.country ?? '').trim();
+    const providerFilter = (searchParams.provider ?? '').trim();
 
-  const filtered = snapshot.validators.filter((v) => {
-    const okQ =
-      !q ||
-      v.displayName.toLowerCase().includes(q) ||
-      (v.secp ?? '').toLowerCase().includes(q);
+    // Покращена фільтрація
+    const filtered = snapshot.validators.filter((v) => {
+      // Пошук по імені або secp (якщо q не порожнє)
+      const matchesSearch =
+        !q ||
+        v.displayName.toLowerCase().includes(q) ||
+        (v.secp ?? '').toLowerCase().includes(q) ||
+        (v.id.toString().includes(q)); // додатково — по id, якщо хтось шукає номер
 
-    const okCountry = !countryFilter || (v.country ?? 'Unknown') === countryFilter;
-    const okProvider = !providerFilter || (v.provider ?? 'Unknown') === providerFilter;
+      // Фільтр по країні (точне співпадіння)
+      const matchesCountry =
+        !countryFilter ||
+        (v.country ?? 'Unknown').trim() === countryFilter.trim();
 
-    return okQ && okCountry && okProvider;
-  });
+      // Фільтр по провайдеру (точне співпадіння)
+      const matchesProvider =
+        !providerFilter ||
+        (v.provider ?? 'Unknown').trim() === providerFilter.trim();
+
+      return matchesSearch && matchesCountry && matchesProvider;
+    });
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
