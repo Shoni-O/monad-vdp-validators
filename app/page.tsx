@@ -87,7 +87,7 @@ export default async function Page({
     );
   }
 
-  const q = (searchParams.q ?? '').toLowerCase().trim();
+  const q = normText(searchParams.q ?? '');
   const countryFilterKey = (searchParams.country ?? '').trim();   // тут буде ключ
   const providerFilterKey = (searchParams.provider ?? '').trim(); // тут буде ключ
 
@@ -300,7 +300,7 @@ export default async function Page({
         Перший валідатор provider: "{snapshot.validators[0]?.provider}" → key "{normProviderKey(snapshot.validators[0]?.provider)}"<br />
         Пошук: "{q}"<br />
         <strong>Знайдено після фільтра: {filtered.length} з {snapshot.validators.length}</strong><br />
-        Чи є "Canada" в списку країн? {countries.some(c => c.trim().toLowerCase() === 'canada') ? 'Так' : 'Ні'}<br />
+        Чи є "Canada" в списку країн? {countryOptions.some(o => o.key === 'canada') ? 'Так' : 'Ні'}<br />
         Приклади перших 5 країн у даних: {snapshot.validators.slice(0, 5).map(v => v.country ?? 'Unknown').join(', ')}
       </div>
 
