@@ -21,6 +21,32 @@ function topEntries(map: Record<string, number>, limit = 10) {
     .slice(0, limit);
 }
 
+function normText(s: string) {
+  return s.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normCountryKey(s?: string) {
+  const raw = (s ?? 'Unknown').trim();
+  const v = normText(raw);
+
+  // ISO2 коди тримаємо у верхньому регістрі (CA, US)
+  if (/^[a-z]{2}$/.test(v)) return v.toUpperCase();
+
+  // Назви країни лишаємо як нормалізований текст
+  return v;
+}
+
+function normProviderKey(s?: string) {
+  const raw = (s ?? 'Unknown').trim();
+
+  // прибираємо AS12345 + зайві символи, вирівнюємо пробіли
+  const noAs = raw.replace(/^AS\d+\s+/i, '');
+  return normText(noAs)
+    .replace(/[.,()]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim() || 'unknown';
+}
+
 export default async function Page({
   searchParams,
 }: {
@@ -62,33 +88,50 @@ export default async function Page({
   }
 
   const q = (searchParams.q ?? '').toLowerCase().trim();
-  const countryFilter = (searchParams.country ?? '').trim();
-  const providerFilter = (searchParams.provider ?? '').trim();
+  const countryFilterKey = (searchParams.country ?? '').trim();   // тут буде ключ
+  const providerFilterKey = (searchParams.provider ?? '').trim(); // тут буде ключ
 
   // Покращена фільтрація (стійка до регістру та пробілів)
   const filtered = snapshot.validators.filter((v) => {
     const matchesSearch =
       !q ||
-      v.displayName.toLowerCase().includes(q) ||
-      (v.secp ?? '').toLowerCase().includes(q) ||
+      normText(v.displayName).includes(q) ||
+      normText(v.secp ?? '').includes(q) ||
       String(v.id).includes(q);
 
-    // Нормалізація країни
-    const vCountryNorm = (v.country ?? 'Unknown').trim().replace(/\s+/g, ' ').toLowerCase();
-    const filterCountryNorm = countryFilter.trim().replace(/\s+/g, ' ').toLowerCase();
-    const matchesCountry = !countryFilter || vCountryNorm === filterCountryNorm;
+    const vCountryKey = normCountryKey(v.country ?? 'Unknown');
+    const matchesCountry = !countryFilterKey || vCountryKey === countryFilterKey;
 
-    // Нормалізація провайдера
-    const vProviderNorm = (v.provider ?? 'Unknown').trim().replace(/\s+/g, ' ').toLowerCase();
-    const filterProviderNorm = providerFilter.trim().replace(/\s+/g, ' ').toLowerCase();
-    const matchesProvider = !providerFilter || vProviderNorm === filterProviderNorm;
+    const vProviderKey = normProviderKey(v.provider ?? 'Unknown');
+    const matchesProvider = !providerFilterKey || vProviderKey === providerFilterKey;
 
     return matchesSearch && matchesCountry && matchesProvider;
   });
 
   // Списки для селектів — точні ключі з даних
-  const countries = Object.keys(snapshot.counts.byCountry).sort((a, b) => a.localeCompare(b));
-  const providers = Object.keys(snapshot.counts.byProvider).sort((a, b) => a.localeCompare(b));
+  const countryOptions = Array.from(
+    new Map(
+      snapshot.validators.map((v) => {
+        const label = (v.country ?? 'Unknown').trim() || 'Unknown';
+        const key = normCountryKey(label);
+        return [key, label] as const;
+      })
+    ).entries()
+  )
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const providerOptions = Array.from(
+    new Map(
+      snapshot.validators.map((v) => {
+        const label = (v.provider ?? 'Unknown').trim() || 'Unknown';
+        const key = normProviderKey(label);
+        return [key, label] as const;
+      })
+    ).entries()
+  )
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
@@ -117,11 +160,11 @@ export default async function Page({
 
           <label className="flex flex-col text-sm gap-1">
             Country
-            <select name="country" defaultValue={countryFilter} className="border rounded px-2 py-1">
+            <select name="country" defaultValue={countryFilterKey} className="border rounded px-2 py-1">
               <option value="">All</option>
-              {countries.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+              {countryOptions.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
                 </option>
               ))}
             </select>
@@ -129,11 +172,11 @@ export default async function Page({
 
           <label className="flex flex-col text-sm gap-1">
             Provider
-            <select name="provider" defaultValue={providerFilter} className="border rounded px-2 py-1">
+            <select name="provider" defaultValue={providerFilterKey} className="border rounded px-2 py-1">
               <option value="">All</option>
-              {providers.map((p) => (
-                <option key={p} value={p}>
-                  {p}
+              {providerOptions.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
                 </option>
               ))}
             </select>
@@ -251,8 +294,10 @@ export default async function Page({
       <div className="bg-yellow-50 border border-yellow-400 p-4 rounded mt-6 text-sm">
         <strong>Debug (видали цей блок після перевірки):</strong><br />
         Мережа: {network}<br />
-        Фільтр країни: "{countryFilter}" (норм: "{countryFilter.trim().toLowerCase()}")<br />
-        Фільтр провайдера: "{providerFilter}"<br />
+        Фільтр країни key: "{countryFilterKey}"<br />
+        Фільтр провайдера key: "{providerFilterKey}"<br />
+        Перший валідатор country: "{snapshot.validators[0]?.country}" → key "{normCountryKey(snapshot.validators[0]?.country)}"<br />
+        Перший валідатор provider: "{snapshot.validators[0]?.provider}" → key "{normProviderKey(snapshot.validators[0]?.provider)}"<br />
         Пошук: "{q}"<br />
         <strong>Знайдено після фільтра: {filtered.length} з {snapshot.validators.length}</strong><br />
         Чи є "Canada" в списку країн? {countries.some(c => c.trim().toLowerCase() === 'canada') ? 'Так' : 'Ні'}<br />
