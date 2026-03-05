@@ -73,12 +73,12 @@ export default async function Page({
       (v.secp ?? '').toLowerCase().includes(q) ||
       String(v.id).includes(q);
 
-    // Нормалізація для країни
+    // Нормалізація країни
     const vCountryNorm = (v.country ?? 'Unknown').trim().replace(/\s+/g, ' ').toLowerCase();
     const filterCountryNorm = countryFilter.trim().replace(/\s+/g, ' ').toLowerCase();
     const matchesCountry = !countryFilter || vCountryNorm === filterCountryNorm;
 
-    // Нормалізація для провайдера
+    // Нормалізація провайдера
     const vProviderNorm = (v.provider ?? 'Unknown').trim().replace(/\s+/g, ' ').toLowerCase();
     const filterProviderNorm = providerFilter.trim().replace(/\s+/g, ' ').toLowerCase();
     const matchesProvider = !providerFilter || vProviderNorm === filterProviderNorm;
@@ -86,7 +86,7 @@ export default async function Page({
     return matchesSearch && matchesCountry && matchesProvider;
   });
 
-  // Списки країн та провайдерів — точні ключі з даних (сортовані)
+  // Списки для селектів — точні ключі з даних
   const countries = Object.keys(snapshot.counts.byCountry).sort((a, b) => a.localeCompare(b));
   const providers = Object.keys(snapshot.counts.byProvider).sort((a, b) => a.localeCompare(b));
 
@@ -184,7 +184,6 @@ export default async function Page({
         </div>
       </section>
 
-      {/* Таблиця */}
       <section className="border rounded overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
@@ -248,15 +247,15 @@ export default async function Page({
         </table>
       </section>
 
-      {/* DEBUG БЛОК — видали після тестування */}
-      <div className="bg-yellow-50 border border-yellow-300 p-4 rounded mt-6 text-sm">
-        <strong>Debug info (видали цей блок після перевірки):</strong><br />
-        Поточна мережа: {network}<br />
-        Фільтр країни: "{countryFilter}"<br />
+      {/* DEBUG БЛОК — обов'язково подивись після тесту */}
+      <div className="bg-yellow-50 border border-yellow-400 p-4 rounded mt-6 text-sm">
+        <strong>Debug (видали цей блок після перевірки):</strong><br />
+        Мережа: {network}<br />
+        Фільтр країни: "{countryFilter}" (норм: "{countryFilter.trim().toLowerCase()}")<br />
         Фільтр провайдера: "{providerFilter}"<br />
         Пошук: "{q}"<br />
-        Знайдено після фільтра: <strong>{filtered.length}</strong> з {snapshot.validators.length}<br />
-        Чи є "Canada" в списку країн? {countries.some(c => c.toLowerCase() === 'canada') ? 'Так' : 'Ні'}<br />
+        <strong>Знайдено після фільтра: {filtered.length} з {snapshot.validators.length}</strong><br />
+        Чи є "Canada" в списку країн? {countries.some(c => c.trim().toLowerCase() === 'canada') ? 'Так' : 'Ні'}<br />
         Приклади перших 5 країн у даних: {snapshot.validators.slice(0, 5).map(v => v.country ?? 'Unknown').join(', ')}
       </div>
 
