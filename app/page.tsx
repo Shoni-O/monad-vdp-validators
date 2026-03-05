@@ -1,6 +1,20 @@
 import type { Snapshot, Network } from '@/lib/types';
+import { headers } from 'next/headers';
 
 export const dynamic = 'force-dynamic';
+
+async function getSnapshot(network: Network): Promise<Snapshot> {
+  const base = process.env.NEXT_PUBLIC_BASE_URL;
+  if (!base) throw new Error('NEXT_PUBLIC_BASE_URL is not set');
+
+  const res = await fetch(`${base}/api/snapshot?network=${network}`, {
+    cache: 'no-store',
+  });
+
+  if (!res.ok) throw new Error('Failed to load snapshot');
+  const json = await res.json();
+  return json.data as Snapshot;
+}
 
 function getNetworkFromHost(host?: string | null): Network {
   const h = (host ?? '').toLowerCase();
@@ -11,16 +25,8 @@ function getNetworkFromHost(host?: string | null): Network {
   // основний домен = mainnet
   if (h.startsWith('monad-validators.')) return 'mainnet';
 
-  // fallback якщо відкриваєш через vercel.app чи інший домен
+  // fallback
   return 'testnet';
-}
-
-async function getSnapshot(): Promise<Snapshot> {
-  // ВАЖЛИВО: беремо snapshot з поточного домену, без NEXT_PUBLIC_BASE_URL
-  const res = await fetch(`/api/snapshot`, { cache: 'no-store' });
-  if (!res.ok) throw new Error('Failed to load snapshot');
-  const json = await res.json();
-  return json.data as Snapshot;
 }
 
 function topEntries(map: Record<string, number>, limit = 10) {
@@ -34,12 +40,10 @@ export default async function Page({
 }: {
   searchParams: { q?: string; country?: string; provider?: string };
 }) {
-  // У server component можна читати host через headers()
-  const { headers } = await import('next/headers');
-  const host = headers().get('host');
+  const host = (await headers()).get('host');
   const network: Network = getNetworkFromHost(host);
 
-  const snapshot = await getSnapshot();
+  const snapshot = await getSnapshot(network);
 
   const q = (searchParams.q ?? '').toLowerCase().trim();
   const countryFilter = (searchParams.country ?? '').trim();
@@ -48,7 +52,7 @@ export default async function Page({
   const countries = Object.keys(snapshot.counts.byCountry).sort();
   const providers = Object.keys(snapshot.counts.byProvider).sort();
 
-  const filtered = snapshot.validators.filter(v => {
+  const filtered = snapshot.validators.filter((v) => {
     const okQ =
       !q ||
       v.displayName.toLowerCase().includes(q) ||
@@ -63,9 +67,8 @@ export default async function Page({
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
 
-  // Домени для “перемикача”
-  const mainnetUrl = `https://monad-validators.block-pro.net/`;
-  const testnetUrl = `https://monad-validators-testnet.block-pro.net/`;
+  const mainnetUrl = 'https://monad-validators.block-pro.net/';
+  const testnetUrl = 'https://monad-validators-testnet.block-pro.net/';
 
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-6">
@@ -78,7 +81,6 @@ export default async function Page({
       </header>
 
       <section className="flex flex-wrap gap-3 items-end">
-        {/* Форма фільтрів без network */}
         <form className="flex flex-wrap gap-3 items-end" action="/" method="get">
           <label className="flex flex-col text-sm gap-1">
             Search
@@ -94,8 +96,10 @@ export default async function Page({
             Country
             <select name="country" defaultValue={countryFilter} className="border rounded px-2 py-1">
               <option value="">All</option>
-              {countries.map(c => (
-                <option key={c} value={c}>{c}</option>
+              {countries.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </select>
           </label>
@@ -104,8 +108,10 @@ export default async function Page({
             Provider
             <select name="provider" defaultValue={providerFilter} className="border rounded px-2 py-1">
               <option value="">All</option>
-              {providers.map(p => (
-                <option key={p} value={p}>{p}</option>
+              {providers.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
               ))}
             </select>
           </label>
@@ -113,7 +119,6 @@ export default async function Page({
           <button className="border rounded px-3 py-2 text-sm">Apply</button>
         </form>
 
-        {/* Перемикач мережі = посилання на інший домен */}
         <div className="flex gap-2 items-center">
           <a
             className={`border rounded px-3 py-2 text-sm ${network === 'mainnet' ? 'font-semibold' : ''}`}
@@ -169,7 +174,7 @@ export default async function Page({
             </tr>
           </thead>
           <tbody>
-            {filtered.map(v => (
+            {filtered.map((v) => (
               <tr key={v.id} className="border-t">
                 <td className="p-3">
                   <div className="flex items-center gap-2">
@@ -208,6 +213,7 @@ export default async function Page({
                 </td>
               </tr>
             ))}
+
             {filtered.length === 0 ? (
               <tr>
                 <td className="p-3 opacity-70" colSpan={6}>
