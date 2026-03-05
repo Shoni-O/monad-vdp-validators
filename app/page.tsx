@@ -66,31 +66,31 @@ export default async function Page({
   }
 
   const q = (searchParams.q ?? '').toLowerCase().trim();
+  const countryFilter = (searchParams.country ?? '').trim();
+  const providerFilter = (searchParams.provider ?? '').trim();
 
-    const countryFilter = (searchParams.country ?? '').trim();
-    const providerFilter = (searchParams.provider ?? '').trim();
+  // Покращена фільтрація
+  const filtered = snapshot.validators.filter((v) => {
+    const matchesSearch =
+      !q ||
+      v.displayName.toLowerCase().includes(q) ||
+      (v.secp ?? '').toLowerCase().includes(q) ||
+      (v.id.toString().includes(q));
 
-    // Покращена фільтрація
-    const filtered = snapshot.validators.filter((v) => {
-      // Пошук по імені або secp (якщо q не порожнє)
-      const matchesSearch =
-        !q ||
-        v.displayName.toLowerCase().includes(q) ||
-        (v.secp ?? '').toLowerCase().includes(q) ||
-        (v.id.toString().includes(q)); // додатково — по id, якщо хтось шукає номер
+    const matchesCountry =
+      !countryFilter ||
+      (v.country ?? 'Unknown').trim() === countryFilter.trim();
 
-      // Фільтр по країні (точне співпадіння)
-      const matchesCountry =
-        !countryFilter ||
-        (v.country ?? 'Unknown').trim() === countryFilter.trim();
+    const matchesProvider =
+      !providerFilter ||
+      (v.provider ?? 'Unknown').trim() === providerFilter.trim();
 
-      // Фільтр по провайдеру (точне співпадіння)
-      const matchesProvider =
-        !providerFilter ||
-        (v.provider ?? 'Unknown').trim() === providerFilter.trim();
+    return matchesSearch && matchesCountry && matchesProvider;
+  });
 
-      return matchesSearch && matchesCountry && matchesProvider;
-    });
+  // Повний список для селектів
+  const countries = Object.keys(snapshot.counts.byCountry).sort();
+  const providers = Object.keys(snapshot.counts.byProvider).sort();
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
