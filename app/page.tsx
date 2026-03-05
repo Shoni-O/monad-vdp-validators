@@ -21,66 +21,7 @@ function topEntries(map: Record<string, number>, limit = 10) {
     .slice(0, limit);
 }
 
-function normText(s: string) {
-  return s.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-/**
- * Country key strategy:
- * - If value looks like ISO2 (2 letters), key = UPPER ISO2
- * - Otherwise key = normalized country name (lowercase)
- */
-function countryKey(v?: string) {
-  const raw = (v ?? '').trim();
-  if (!raw) return 'UNKNOWN';
-
-  const t = raw.trim();
-  if (t.length === 2 && /^[a-zA-Z]{2}$/.test(t)) return t.toUpperCase();
-
-  return normText(t) || 'unknown';
-}
-
-/**
- * Pretty label from ISO2 code if possible.
- * If not ISO2, return original-ish normalized title.
- */
-const regionNames =
-  typeof Intl !== 'undefined' && 'DisplayNames' in Intl
-    ? new Intl.DisplayNames(['en'], { type: 'region' })
-    : null;
-
-function countryLabelFromKey(key: string) {
-  if (!key) return 'Unknown';
-
-  // ISO2
-  if (key.length === 2 && /^[A-Z]{2}$/.test(key)) {
-    return regionNames?.of(key) ?? key;
-  }
-
-  // name fallback (make it a bit nicer)
-  const s = key.trim();
-  if (!s) return 'Unknown';
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function providerKey(v?: string) {
-  const raw = (v ?? '').trim();
-  if (!raw) return 'unknown';
-
-  const noAs = raw.replace(/^AS\d+\s+/i, '');
-  return (
-    normText(noAs)
-      .replace(/[.,()]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim() || 'unknown'
-  );
-}
-
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: { q?: string; country?: string; provider?: string };
-}) {
+export default async function Page() {
   let snapshot: Snapshot | null = null;
   let error: string | null = null;
   let network: Network = 'testnet';
@@ -118,51 +59,6 @@ export default async function Page({
     );
   }
 
-  const q = normText(searchParams.q ?? '');
-  const countryFilterKey = (searchParams.country ?? '').trim(); // key
-  const providerFilterKey = (searchParams.provider ?? '').trim(); // key
-
-  // Build options from validators to guarantee exact match with filter keys
-  const countryOptions = Array.from(
-    new Map(
-      snapshot.validators.map((v) => {
-        const key = countryKey(v.country);
-        const label = countryLabelFromKey(key);
-        return [key, label] as const;
-      })
-    ).entries()
-  )
-    .map(([key, label]) => ({ key, label }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-
-  const providerOptions = Array.from(
-    new Map(
-      snapshot.validators.map((v) => {
-        const key = providerKey(v.provider);
-        const label = (v.provider ?? 'Unknown').trim() || 'Unknown';
-        return [key, label] as const;
-      })
-    ).entries()
-  )
-    .map(([key, label]) => ({ key, label }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-
-  const filtered = snapshot.validators.filter((v) => {
-    const matchesSearch =
-      !q ||
-      normText(v.displayName).includes(q) ||
-      normText(v.secp ?? '').includes(q) ||
-      String(v.id).includes(q);
-
-    const vCountryKey = countryKey(v.country);
-    const matchesCountry = !countryFilterKey || vCountryKey === countryFilterKey;
-
-    const vProviderKey = providerKey(v.provider);
-    const matchesProvider = !providerFilterKey || vProviderKey === providerFilterKey;
-
-    return matchesSearch && matchesCountry && matchesProvider;
-  });
-
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
 
@@ -176,45 +72,7 @@ export default async function Page({
         </p>
       </header>
 
-      <section className="flex flex-wrap gap-3 items-end">
-        <form className="flex flex-wrap gap-3 items-end" action="/" method="get">
-          <label className="flex flex-col text-sm gap-1">
-            Search
-            <input
-              name="q"
-              defaultValue={searchParams.q ?? ''}
-              className="border rounded px-2 py-1"
-              placeholder="name or secp"
-            />
-          </label>
-
-          <label className="flex flex-col text-sm gap-1">
-            Country
-            <select name="country" defaultValue={countryFilterKey} className="border rounded px-2 py-1">
-              <option value="">All</option>
-              {countryOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex flex-col text-sm gap-1">
-            Provider
-            <select name="provider" defaultValue={providerFilterKey} className="border rounded px-2 py-1">
-              <option value="">All</option>
-              {providerOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button className="border rounded px-3 py-2 text-sm">Apply</button>
-        </form>
-
+      <section className="flex justify-end">
         <div className="flex gap-2 items-center">
           <a
             className={`border rounded px-3 py-2 text-sm ${network === 'mainnet' ? 'font-semibold' : ''}`}
@@ -270,7 +128,7 @@ export default async function Page({
             </tr>
           </thead>
           <tbody>
-            {filtered.map((v) => (
+            {snapshot.validators.map((v) => (
               <tr key={v.id} className="border-t">
                 <td className="p-3">
                   <div className="flex items-center gap-2">
@@ -307,10 +165,10 @@ export default async function Page({
               </tr>
             ))}
 
-            {filtered.length === 0 && (
+            {snapshot.validators.length === 0 && (
               <tr>
                 <td className="p-3 opacity-70 text-center" colSpan={6}>
-                  No matching validators found
+                  No validators found
                 </td>
               </tr>
             )}
@@ -318,30 +176,9 @@ export default async function Page({
         </table>
       </section>
 
-      {/* DEBUG (видали після перевірки) */}
-      <div className="bg-yellow-50 border border-yellow-400 p-4 rounded mt-6 text-sm">
-        <strong>Debug (видали цей блок після перевірки):</strong>
-        <br />
-        Мережа: {network}
-        <br />
-        Search: "{q}"
-        <br />
-        Country filter key: "{countryFilterKey}"
-        <br />
-        Provider filter key: "{providerFilterKey}"
-        <br />
-        First country raw: "{snapshot.validators[0]?.country ?? 'Unknown'}" → "{countryKey(snapshot.validators[0]?.country)}"
-        <br />
-        First provider raw: "{snapshot.validators[0]?.provider ?? 'Unknown'}" → "{providerKey(snapshot.validators[0]?.provider)}"
-        <br />
-        <strong>
-          Знайдено після фільтра: {filtered.length} з {snapshot.validators.length}
-        </strong>
-        <br />
-        Перші 10 country keys: {countryOptions.slice(0, 10).map((o) => o.key).join(', ')}
-      </div>
-
-      <footer className="text-xs opacity-70 text-center mt-8">Data sources: gmonads public API and monad-developers validator-info.</footer>
+      <footer className="text-xs opacity-70 text-center mt-8">
+        Data sources: gmonads public API and monad-developers validator-info.
+      </footer>
     </main>
   );
 }
