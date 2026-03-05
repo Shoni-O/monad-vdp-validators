@@ -31,24 +31,18 @@ export default async function Page({
   let network: Network = 'testnet';
 
   try {
-    // headers() тепер async → await його
     const headersList = await headers();
     const host = headersList.get('host');
-
     network = getNetworkFromHost(host);
-
     snapshot = await computeSnapshot(network);
   } catch (err) {
     console.error('Error computing snapshot:', err);
-    console.log('countryFilter:', countryFilter);
-    console.log('First few countries in data:', snapshot.validators.slice(0, 5).map(v => v.country));
     error = err instanceof Error ? err.message : 'Unknown error';
   }
 
   const mainnetUrl = 'https://monad-validators.block-pro.net/';
   const testnetUrl = 'https://monad-validators-testnet.block-pro.net/';
 
-  // Якщо помилка — показуємо екран помилки
   if (error || !snapshot) {
     return (
       <main className="max-w-6xl mx-auto p-6 text-center">
@@ -71,31 +65,30 @@ export default async function Page({
   const countryFilter = (searchParams.country ?? '').trim();
   const providerFilter = (searchParams.provider ?? '').trim();
 
-  // Покращена фільтрація
+  // Покращена фільтрація (стійка до регістру та пробілів)
   const filtered = snapshot.validators.filter((v) => {
     const matchesSearch =
       !q ||
       v.displayName.toLowerCase().includes(q) ||
       (v.secp ?? '').toLowerCase().includes(q) ||
-      (v.id.toString().includes(q));
+      String(v.id).includes(q);
 
-    const matchesCountry =
-      !countryFilter ||
-      (v.country ?? 'Unknown').trim().toLowerCase() === countryFilter.trim().toLowerCase();
+    // Нормалізація для країни
+    const vCountryNorm = (v.country ?? 'Unknown').trim().replace(/\s+/g, ' ').toLowerCase();
+    const filterCountryNorm = countryFilter.trim().replace(/\s+/g, ' ').toLowerCase();
+    const matchesCountry = !countryFilter || vCountryNorm === filterCountryNorm;
 
-    const matchesProvider =
-      !providerFilter ||
-      (v.provider ?? 'Unknown').trim().toLowerCase() === providerFilter.trim().toLowerCase();
+    // Нормалізація для провайдера
+    const vProviderNorm = (v.provider ?? 'Unknown').trim().replace(/\s+/g, ' ').toLowerCase();
+    const filterProviderNorm = providerFilter.trim().replace(/\s+/g, ' ').toLowerCase();
+    const matchesProvider = !providerFilter || vProviderNorm === filterProviderNorm;
 
     return matchesSearch && matchesCountry && matchesProvider;
   });
 
-  // Повний список для селектів
-  const countries = Object.keys(snapshot.counts.byCountry)
-    .sort((a, b) => a.localeCompare(b));   // алфавітне сортування
-
-  const providers = Object.keys(snapshot.counts.byProvider)
-    .sort((a, b) => a.localeCompare(b));
+  // Списки країн та провайдерів — точні ключі з даних (сортовані)
+  const countries = Object.keys(snapshot.counts.byCountry).sort((a, b) => a.localeCompare(b));
+  const providers = Object.keys(snapshot.counts.byProvider).sort((a, b) => a.localeCompare(b));
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
@@ -127,7 +120,7 @@ export default async function Page({
             <select name="country" defaultValue={countryFilter} className="border rounded px-2 py-1">
               <option value="">All</option>
               {countries.map((c) => (
-                <option key={c} value={c.toLowerCase()}>
+                <option key={c} value={c}>
                   {c}
                 </option>
               ))}
@@ -139,7 +132,7 @@ export default async function Page({
             <select name="provider" defaultValue={providerFilter} className="border rounded px-2 py-1">
               <option value="">All</option>
               {providers.map((p) => (
-                <option key={p} value={p.toLowerCase()}>
+                <option key={p} value={p}>
                   {p}
                 </option>
               ))}
@@ -191,6 +184,7 @@ export default async function Page({
         </div>
       </section>
 
+      {/* Таблиця */}
       <section className="border rounded overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
@@ -209,7 +203,6 @@ export default async function Page({
                 <td className="p-3">
                   <div className="flex items-center gap-2">
                     {v.logo ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img src={v.logo} alt="" className="w-6 h-6 rounded" />
                     ) : null}
                     <div className="flex flex-col">
@@ -254,6 +247,18 @@ export default async function Page({
           </tbody>
         </table>
       </section>
+
+      {/* DEBUG БЛОК — видали після тестування */}
+      <div className="bg-yellow-50 border border-yellow-300 p-4 rounded mt-6 text-sm">
+        <strong>Debug info (видали цей блок після перевірки):</strong><br />
+        Поточна мережа: {network}<br />
+        Фільтр країни: "{countryFilter}"<br />
+        Фільтр провайдера: "{providerFilter}"<br />
+        Пошук: "{q}"<br />
+        Знайдено після фільтра: <strong>{filtered.length}</strong> з {snapshot.validators.length}<br />
+        Чи є "Canada" в списку країн? {countries.some(c => c.toLowerCase() === 'canada') ? 'Так' : 'Ні'}<br />
+        Приклади перших 5 країн у даних: {snapshot.validators.slice(0, 5).map(v => v.country ?? 'Unknown').join(', ')}
+      </div>
 
       <footer className="text-xs opacity-70 text-center mt-8">
         Data sources: gmonads public API and monad-developers validator-info.
