@@ -9,12 +9,22 @@ export const revalidate = 300;
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
 function pickNetwork(req: NextRequest): Network {
+  // 1. Спочатку беремо з query-параметра (його передає page.tsx)
+  const networkParam = req.nextUrl.searchParams
+    .get('network')
+    ?.toLowerCase()
+    .trim() as Network | undefined;
+
+  if (networkParam === 'mainnet' || networkParam === 'testnet') {
+    return networkParam;
+  }
+
+  // 2. Fallback — тільки для прямих викликів API
   const host = (req.headers.get('host') ?? '').toLowerCase();
 
   if (host.startsWith('monad-validators-testnet.')) return 'testnet';
   if (host.startsWith('monad-validators.')) return 'mainnet';
 
-  // fallback для vercel.app / preview
   return 'testnet';
 }
 

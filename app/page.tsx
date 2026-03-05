@@ -7,7 +7,7 @@ async function getSnapshot(network: Network): Promise<Snapshot> {
   const base = process.env.NEXT_PUBLIC_BASE_URL;
   if (!base) throw new Error('NEXT_PUBLIC_BASE_URL is not set');
 
-  const res = await fetch(`${base}/api/snapshot?network=${network}`, {
+  const res = await fetch(`/api/snapshot?network=${network}`, {
     cache: 'no-store',
   });
 
