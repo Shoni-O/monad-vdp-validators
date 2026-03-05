@@ -23,8 +23,11 @@ async function fetchJson(url: string) {
 }
 
 async function tryFetchValidatorInfoFromGitHub(network: Network, nodeId?: string) {
-  if (!nodeId) return null;
-  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nodeId}.json`;
+  const nid = safeStr(nodeId);
+  if (!nid) return null;
+
+  // repo uses filenames as node_id.json
+  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nid}.json`;
   const res = await fetch(rawUrl, { next: { revalidate: 3600 } });
   if (!res.ok) return null;
   return res.json();
@@ -36,9 +39,16 @@ function safeStr(v: any): string | undefined {
   return s.length ? s : undefined;
 }
 
+function normalizeProvider(v?: string) {
+  if (!v) return undefined;
+  // "AS12345 Hetzner Online GmbH" -> "Hetzner Online GmbH"
+  return v.replace(/^AS\d+\s+/, '').trim() || undefined;
+}
+
 function extractGeo(meta: any): { country?: string; city?: string; provider?: string } {
   const country =
     safeStr(meta?.country) ??
+    safeStr(meta?.country_code) ??
     safeStr(meta?.geo?.country) ??
     safeStr(meta?.geolocation?.country) ??
     safeStr(meta?.location?.country);
@@ -61,17 +71,10 @@ function extractGeo(meta: any): { country?: string; city?: string; provider?: st
   return { country, city, provider: normalizeProvider(providerRaw) };
 }
 
-function normalizeProvider(v?: string) {
-  if (!v) return undefined;
-  // "AS12345 Hetzner Online GmbH" -> "Hetzner Online GmbH"
-  return v.replace(/^AS\d+\s+/, '').trim() || undefined;
-}
-
 type IpGeo = { country?: string; city?: string; provider?: string };
 
 function pickIp(row: any): string | undefined {
-  const ip = safeStr(row?.ip_address) ?? safeStr(row?.ip) ?? safeStr(row?.ipv4);
-  return ip;
+  return safeStr(row?.ip_address) ?? safeStr(row?.ip) ?? safeStr(row?.ipv4);
 }
 
 function normalizeSecp(row: any): string | undefined {
@@ -84,7 +87,7 @@ function normalizeSecp(row: any): string | undefined {
   );
 }
 
-function makeDisplayName(network: Network, merged: any, id: number) {
+function makeDisplayName(merged: any, id: number) {
   const name =
     safeStr(merged?.name) ??
     safeStr(merged?.displayName) ??
@@ -105,7 +108,7 @@ function makeDisplayName(network: Network, merged: any, id: number) {
   const nodeId = safeStr(merged?.node_id);
   if (nodeId) return `Validator ${nodeId.slice(0, 10)}…`;
 
-  return `Validator ${id}`;
+  return `Validator #${id}`;
 }
 
 function makeFallbackKey(merged: any, id: number): string | undefined {
@@ -117,6 +120,24 @@ function makeFallbackKey(merged: any, id: number): string | undefined {
     (typeof merged?.val_index === 'number' ? String(merged.val_index) : undefined) ??
     String(id)
   );
+}
+
+// IMPORTANT: gmonads може мати id або val_index. Ця функція дістає “універсальний” numeric key.
+function getNumericId(x: any): number | undefined {
+  if (typeof x?.id === 'number') return x.id;
+  if (typeof x?.val_index === 'number') return x.val_index;
+  if (typeof x?.id === 'string' && x.id.trim() && Number.isFinite(Number(x.id))) return Number(x.id);
+  if (typeof x?.val_index === 'string' && x.val_index.trim() && Number.isFinite(Number(x.val_index)))
+    return Number(x.val_index);
+  return undefined;
+}
+
+function isActive(v: any): boolean {
+  // якщо поле є
+  const t = String(v?.validator_set_type ?? '').toLowerCase();
+  if (t) return t === 'active';
+  // якщо поля нема, не чіпаємо, але зазвичай воно є
+  return true;
 }
 
 export async function GET(req: NextRequest) {
@@ -132,14 +153,17 @@ export async function GET(req: NextRequest) {
   const geolocData = (geolocs?.data ?? []) as any[];
   const metaData = (metadata?.data ?? []) as any[];
 
-  const byIdGeo = new Map<number, any>();
+  // Мапи по універсальному numeric key (id/val_index)
+  const byKeyGeo = new Map<number, any>();
   for (const g of geolocData) {
-    if (typeof g?.id === 'number') byIdGeo.set(g.id, g);
+    const k = getNumericId(g);
+    if (typeof k === 'number') byKeyGeo.set(k, g);
   }
 
-  const byIdMeta = new Map<number, any>();
+  const byKeyMeta = new Map<number, any>();
   for (const m of metaData) {
-    if (typeof m?.id === 'number') byIdMeta.set(m.id, m);
+    const k = getNumericId(m);
+    if (typeof k === 'number') byKeyMeta.set(k, m);
   }
 
   // кеш по IP, щоб не робити дублікати
@@ -149,9 +173,9 @@ export async function GET(req: NextRequest) {
     if (!ip) return {};
     if (ipCache.has(ip)) return ipCache.get(ip)!;
 
-    const token = process.env.IPINFO_TOKEN;
+    const token = safeStr(process.env.IPINFO_TOKEN);
     if (!token) {
-      const empty = {};
+      const empty: IpGeo = {};
       ipCache.set(ip, empty);
       return empty;
     }
@@ -162,7 +186,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!res.ok) {
-      const empty = {};
+      const empty: IpGeo = {};
       ipCache.set(ip, empty);
       return empty;
     }
@@ -179,42 +203,80 @@ export async function GET(req: NextRequest) {
     return out;
   }
 
-  // базові рядки робимо async, щоб одразу підставити geo/provider по IP
-  const baseRows = epochData.map(v => {
-  const geo = byIdGeo.get(v.id);
-  const meta = byIdMeta.get(v.id);
-  const merged = { ...v, ...meta, ...geo };
+  // 1) беремо тільки active (щоб цифри збігались з очікуванням)
+  const activeEpoch = epochData.filter(isActive);
 
-  const { country, city, provider } = extractGeo(merged);
+  // 2) збираємо baseRows асинхронно, щоб мати fallback geo/provider по IP
+  const baseRows = await Promise.all(
+    activeEpoch.map(async (v: any) => {
+      const key = getNumericId(v);
+      if (typeof key !== 'number') {
+        // якщо раптом немає ключа, все одно повернемо щось стабільне
+        const mergedOnly = { ...v };
+        const ip0 = pickIp(mergedOnly);
+        const ipGeo0 = await geoFromIp(ip0);
 
-  const nodeId =
-    (typeof merged?.node_id === 'string' && merged.node_id.trim().length ? merged.node_id.trim() : undefined) ??
-    (typeof (v as any)?.node_id === 'string' && (v as any).node_id.trim().length ? (v as any).node_id.trim() : undefined);
+        const nodeId0 = safeStr(mergedOnly?.node_id);
+        const secp0 = normalizeSecp(mergedOnly) ?? safeStr(mergedOnly?.auth_address);
+        const bls0 = safeStr(mergedOnly?.bls);
 
-  return {
-    id: v.id,
-    nodeId,
-    secp: merged.secp ?? v.secp,
-    bls: merged.bls ?? v.bls,
-    country,
-    city,
-    provider,
-    merged,
-  };
-});
+        return {
+          id: 0,
+          nodeId: nodeId0,
+          secp: secp0,
+          bls: bls0,
+          country: ipGeo0.country,
+          city: ipGeo0.city,
+          provider: ipGeo0.provider,
+          merged: mergedOnly,
+        };
+      }
+
+      const geo = byKeyGeo.get(key);
+      const meta = byKeyMeta.get(key);
+
+      // merged тільки з gmonads джерел (не домішуємо github!)
+      const merged = { ...v, ...meta, ...geo };
+
+      const extracted = extractGeo(merged);
+
+      // fallback по IP тільки якщо поля не прийшли з gmonads
+      const ip = pickIp(merged);
+      const ipGeo = (!extracted.country || !extracted.city || !extracted.provider) ? await geoFromIp(ip) : {};
+
+      const country = extracted.country ?? ipGeo.country;
+      const city = extracted.city ?? ipGeo.city;
+      const provider = extracted.provider ?? ipGeo.provider;
+
+      const nodeId = safeStr(merged?.node_id) ?? safeStr((v as any)?.node_id);
+
+      const secp =
+        normalizeSecp(merged) ??
+        safeStr(merged?.auth_address) ??
+        undefined;
+
+      const bls = safeStr(merged?.bls) ?? safeStr((v as any)?.bls);
+
+      return {
+        id: key,
+        nodeId,
+        secp,
+        bls,
+        country,
+        city,
+        provider,
+        merged,
+      };
+    })
+  );
 
   const counts = buildCounts(baseRows);
 
   const enriched: EnrichedValidator[] = await Promise.all(
     baseRows.map(async (row) => {
-      // GitHub validator-info працює тільки якщо є справжній secp key
       const gh = await tryFetchValidatorInfoFromGitHub(network, row.nodeId);
 
-      const displayName =
-      gh?.name ??
-      row.merged?.name ??
-      row.merged?.validator ??
-      `Validator #${row.id}`;
+      const displayName = safeStr(gh?.name) ?? makeDisplayName(row.merged, row.id);
 
       const scores = scoreValidator({
         country: row.country,
@@ -223,9 +285,13 @@ export async function GET(req: NextRequest) {
         counts,
       });
 
+      // для UI: якщо secp нема, хай під ніком можна показати node_id через raw.gmonads.node_id
+      // (але у тип EnrichedValidator ми зайвих полів не додаємо)
+      const fallbackKey = makeFallbackKey(row.merged, row.id);
+
       return {
         id: row.id,
-        secp: row.secp,
+        secp: row.secp ?? fallbackKey, // щоб у тебе не було “пусто” під ніком, якщо фронт показує secp
         bls: row.bls,
 
         displayName,
@@ -234,9 +300,9 @@ export async function GET(req: NextRequest) {
         logo: safeStr(gh?.logo) ?? safeStr(row.merged?.logo),
         x: safeStr(gh?.x) ?? safeStr(row.merged?.x),
 
-        country: row.country ?? 'Unknown',
-        city: row.city ?? 'Unknown',
-        provider: row.provider ?? 'Unknown',
+        country: row.country,
+        city: row.city,
+        provider: row.provider,
 
         scores,
         raw: { gmonads: row.merged, github: gh ?? undefined },
