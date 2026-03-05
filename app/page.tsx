@@ -1,8 +1,8 @@
-// app/page.tsx   (або де в тебе лежить сторінка)
+// app/page.tsx
 
 import type { Snapshot, Network } from '@/lib/types';
 import { headers } from 'next/headers';
-import { computeSnapshot } from '@/lib/getSnapshot';  // ← імпортуємо сюди
+import { computeSnapshot } from '@/lib/getSnapshot';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +31,10 @@ export default async function Page({
   let network: Network = 'testnet';
 
   try {
-    const host = headers().get('host');
+    // headers() тепер async → await його
+    const headersList = await headers();
+    const host = headersList.get('host');
+
     network = getNetworkFromHost(host);
 
     snapshot = await computeSnapshot(network);
@@ -43,7 +46,7 @@ export default async function Page({
   const mainnetUrl = 'https://monad-validators.block-pro.net/';
   const testnetUrl = 'https://monad-validators-testnet.block-pro.net/';
 
-  // Якщо помилка — показуємо простий екран
+  // Якщо помилка — показуємо екран помилки
   if (error || !snapshot) {
     return (
       <main className="max-w-6xl mx-auto p-6 text-center">
@@ -62,7 +65,7 @@ export default async function Page({
     );
   }
 
-  // Нормальний рендер, коли все ок
+  // Нормальний рендер
   const q = (searchParams.q ?? '').toLowerCase().trim();
   const countryFilter = (searchParams.country ?? '').trim();
   const providerFilter = (searchParams.provider ?? '').trim();
