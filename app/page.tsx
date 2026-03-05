@@ -1,35 +1,18 @@
+// app/page.tsx   (або де в тебе лежить сторінка)
+
 import type { Snapshot, Network } from '@/lib/types';
 import { headers } from 'next/headers';
+import { computeSnapshot } from '@/lib/getSnapshot';  // ← імпортуємо сюди
 
 export const dynamic = 'force-dynamic';
-
-// page.tsx — у функції getSnapshot
-async function getSnapshot(network: Network): Promise<Snapshot> {
-  const res = await fetch(`/api/snapshot?network=${network}`, {
-    cache: 'no-store',
-    // headers: { ... } якщо треба, але зазвичай не потрібно
-  });
-
-  if (!res.ok) {
-    console.error('Snapshot fetch failed:', res.status, await res.text()); // ← додай це для логів
-    throw new Error(`Failed to load snapshot: ${res.status}`);
-  }
-
-  const json = await res.json();
-  return json.data as Snapshot;
-}
 
 function getNetworkFromHost(host?: string | null): Network {
   const h = (host ?? '').toLowerCase();
 
-  // testnet на окремому домені
   if (h.startsWith('monad-validators-testnet.')) return 'testnet';
-
-  // основний домен = mainnet
   if (h.startsWith('monad-validators.')) return 'mainnet';
 
-  // fallback
-  return 'testnet';
+  return 'testnet'; // fallback
 }
 
 function topEntries(map: Record<string, number>, limit = 10) {
@@ -43,11 +26,43 @@ export default async function Page({
 }: {
   searchParams: { q?: string; country?: string; provider?: string };
 }) {
-  const host = (await headers()).get('host');
-  const network: Network = getNetworkFromHost(host);
+  let snapshot: Snapshot | null = null;
+  let error: string | null = null;
+  let network: Network = 'testnet';
 
-  const snapshot = await getSnapshot(network);
+  try {
+    const host = headers().get('host');
+    network = getNetworkFromHost(host);
 
+    snapshot = await computeSnapshot(network);
+  } catch (err) {
+    console.error('Error computing snapshot:', err);
+    error = err instanceof Error ? err.message : 'Unknown error';
+  }
+
+  const mainnetUrl = 'https://monad-validators.block-pro.net/';
+  const testnetUrl = 'https://monad-validators-testnet.block-pro.net/';
+
+  // Якщо помилка — показуємо простий екран
+  if (error || !snapshot) {
+    return (
+      <main className="max-w-6xl mx-auto p-6 text-center">
+        <h1 className="text-3xl font-bold text-red-600 mb-4">Something went wrong</h1>
+        <p className="text-lg mb-6">
+          Failed to load validator data for <strong>{network}</strong>.
+        </p>
+        <p className="text-sm text-gray-600 mb-4">
+          {error || 'Please check server logs or try again later.'}
+        </p>
+        <div className="flex justify-center gap-4">
+          <a href={mainnetUrl} className="underline text-blue-600">Mainnet</a>
+          <a href={testnetUrl} className="underline text-blue-600">Testnet</a>
+        </div>
+      </main>
+    );
+  }
+
+  // Нормальний рендер, коли все ок
   const q = (searchParams.q ?? '').toLowerCase().trim();
   const countryFilter = (searchParams.country ?? '').trim();
   const providerFilter = (searchParams.provider ?? '').trim();
@@ -69,9 +84,6 @@ export default async function Page({
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
-
-  const mainnetUrl = 'https://monad-validators.block-pro.net/';
-  const testnetUrl = 'https://monad-validators-testnet.block-pro.net/';
 
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-6">
@@ -217,18 +229,18 @@ export default async function Page({
               </tr>
             ))}
 
-            {filtered.length === 0 ? (
+            {filtered.length === 0 && (
               <tr>
-                <td className="p-3 opacity-70" colSpan={6}>
-                  No results
+                <td className="p-3 opacity-70 text-center" colSpan={6}>
+                  No matching validators found
                 </td>
               </tr>
-            ) : null}
+            )}
           </tbody>
         </table>
       </section>
 
-      <footer className="text-xs opacity-70">
+      <footer className="text-xs opacity-70 text-center mt-8">
         Data sources: gmonads public API and monad-developers validator-info.
       </footer>
     </main>
