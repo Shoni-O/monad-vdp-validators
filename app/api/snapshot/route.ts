@@ -225,7 +225,7 @@ export async function GET(req: NextRequest) {
 
       return {
         id: row.id,
-        secp: row.secp ?? row.fallbackKey,
+        secp: row.secp,
         bls: row.bls,
 
         displayName,
