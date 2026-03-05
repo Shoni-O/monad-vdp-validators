@@ -9,8 +9,13 @@ export const revalidate = 300;
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
 function pickNetwork(req: NextRequest): Network {
-  const n = (req.nextUrl.searchParams.get('network') ?? 'testnet').toLowerCase();
-  return n === 'mainnet' ? 'mainnet' : 'testnet';
+  const host = (req.headers.get('host') ?? '').toLowerCase();
+
+  if (host.startsWith('monad-validators-testnet.')) return 'testnet';
+  if (host.startsWith('monad-validators.')) return 'mainnet';
+
+  // fallback для vercel.app / preview
+  return 'testnet';
 }
 
 async function fetchJson(url: string) {

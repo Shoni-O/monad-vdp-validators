@@ -2,10 +2,22 @@ import type { Snapshot, Network } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
-async function getSnapshot(network: Network): Promise<Snapshot> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/snapshot?network=${network}`, {
-    cache: 'no-store'
-  });
+function getNetworkFromHost(host?: string | null): Network {
+  const h = (host ?? '').toLowerCase();
+
+  // testnet на окремому домені
+  if (h.startsWith('monad-validators-testnet.')) return 'testnet';
+
+  // основний домен = mainnet
+  if (h.startsWith('monad-validators.')) return 'mainnet';
+
+  // fallback якщо відкриваєш через vercel.app чи інший домен
+  return 'testnet';
+}
+
+async function getSnapshot(): Promise<Snapshot> {
+  // ВАЖЛИВО: беремо snapshot з поточного домену, без NEXT_PUBLIC_BASE_URL
+  const res = await fetch(`/api/snapshot`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Failed to load snapshot');
   const json = await res.json();
   return json.data as Snapshot;
@@ -20,10 +32,14 @@ function topEntries(map: Record<string, number>, limit = 10) {
 export default async function Page({
   searchParams,
 }: {
-  searchParams: { network?: string; q?: string; country?: string; provider?: string };
+  searchParams: { q?: string; country?: string; provider?: string };
 }) {
-  const network: Network = searchParams.network === 'mainnet' ? 'mainnet' : 'testnet';
-  const snapshot = await getSnapshot(network);
+  // У server component можна читати host через headers()
+  const { headers } = await import('next/headers');
+  const host = headers().get('host');
+  const network: Network = getNetworkFromHost(host);
+
+  const snapshot = await getSnapshot();
 
   const q = (searchParams.q ?? '').toLowerCase().trim();
   const countryFilter = (searchParams.country ?? '').trim();
@@ -47,6 +63,10 @@ export default async function Page({
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
 
+  // Домени для “перемикача”
+  const mainnetUrl = `https://monad-validators.block-pro.net/`;
+  const testnetUrl = `https://monad-validators-testnet.block-pro.net/`;
+
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-6">
       <header className="space-y-2">
@@ -58,15 +78,8 @@ export default async function Page({
       </header>
 
       <section className="flex flex-wrap gap-3 items-end">
+        {/* Форма фільтрів без network */}
         <form className="flex flex-wrap gap-3 items-end" action="/" method="get">
-          <label className="flex flex-col text-sm gap-1">
-            Network
-            <select name="network" defaultValue={network} className="border rounded px-2 py-1">
-              <option value="testnet">testnet</option>
-              <option value="mainnet">mainnet</option>
-            </select>
-          </label>
-
           <label className="flex flex-col text-sm gap-1">
             Search
             <input
@@ -99,6 +112,22 @@ export default async function Page({
 
           <button className="border rounded px-3 py-2 text-sm">Apply</button>
         </form>
+
+        {/* Перемикач мережі = посилання на інший домен */}
+        <div className="flex gap-2 items-center">
+          <a
+            className={`border rounded px-3 py-2 text-sm ${network === 'mainnet' ? 'font-semibold' : ''}`}
+            href={mainnetUrl}
+          >
+            mainnet
+          </a>
+          <a
+            className={`border rounded px-3 py-2 text-sm ${network === 'testnet' ? 'font-semibold' : ''}`}
+            href={testnetUrl}
+          >
+            testnet
+          </a>
+        </div>
       </section>
 
       <section className="grid md:grid-cols-2 gap-4">
@@ -150,7 +179,7 @@ export default async function Page({
                     ) : null}
                     <div className="flex flex-col">
                       <span className="font-medium">{v.displayName}</span>
-                      <span className="opacity-70 text-xs">id {v.id}</span>
+                      <span className="opacity-70 text-xs">{v.secp ? v.secp : `id ${v.id}`}</span>
                     </div>
                   </div>
                 </td>
