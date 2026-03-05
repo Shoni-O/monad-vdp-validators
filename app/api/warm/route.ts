@@ -1,26 +1,27 @@
-import { NextRequest } from 'next/server';
-
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-
-function mustBeCron(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-
-  const header = req.headers.get('x-cron-secret');
-  return header === secret;
-}
+// app/api/warm/route.ts
+import { NextResponse } from 'next/server';
 
 async function warm(network: 'testnet' | 'mainnet') {
-  const url = `${process.env.https://monad-validators.block-pro.net}/api/snapshot?network=${network}`;
-  await fetch(url, { method: 'GET' });
+  const base =
+    process.env.PUBLIC_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    'http://localhost:3000';
+
+  const url = `${base}/api/snapshot?network=${network}`;
+  await fetch(url, { method: 'GET', cache: 'no-store' });
 }
 
-export async function GET(req: NextRequest) {
-  if (!mustBeCron(req)) {
-    return Response.json({ success: false, error: 'unauthorized' }, { status: 401 });
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+
+  const secret = searchParams.get('secret') || '';
+  const expected = process.env.CRON_SECRET || '';
+
+  if (expected && secret !== expected) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }
 
   await Promise.all([warm('testnet'), warm('mainnet')]);
-  return Response.json({ success: true, warmed: true });
+
+  return NextResponse.json({ ok: true });
 }
