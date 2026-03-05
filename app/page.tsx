@@ -1,65 +1,198 @@
-import Image from "next/image";
+import type { Snapshot, Network } from '@/lib/types';
 
-export default function Home() {
+export const dynamic = 'force-dynamic';
+
+async function getSnapshot(network: Network): Promise<Snapshot> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/snapshot?network=${network}`, {
+    cache: 'no-store'
+  });
+  if (!res.ok) throw new Error('Failed to load snapshot');
+  const json = await res.json();
+  return json.data as Snapshot;
+}
+
+function topEntries(map: Record<string, number>, limit = 10) {
+  return Object.entries(map)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit);
+}
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: { network?: string; q?: string; country?: string; provider?: string };
+}) {
+  const network: Network = searchParams.network === 'mainnet' ? 'mainnet' : 'testnet';
+  const snapshot = await getSnapshot(network);
+
+  const q = (searchParams.q ?? '').toLowerCase().trim();
+  const countryFilter = (searchParams.country ?? '').trim();
+  const providerFilter = (searchParams.provider ?? '').trim();
+
+  const countries = Object.keys(snapshot.counts.byCountry).sort();
+  const providers = Object.keys(snapshot.counts.byProvider).sort();
+
+  const filtered = snapshot.validators.filter(v => {
+    const okQ =
+      !q ||
+      v.displayName.toLowerCase().includes(q) ||
+      (v.secp ?? '').toLowerCase().includes(q);
+
+    const okCountry = !countryFilter || (v.country ?? 'Unknown') === countryFilter;
+    const okProvider = !providerFilter || (v.provider ?? 'Unknown') === providerFilter;
+
+    return okQ && okCountry && okProvider;
+  });
+
+  const topCountries = topEntries(snapshot.counts.byCountry, 8);
+  const topProviders = topEntries(snapshot.counts.byProvider, 8);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+    <main className="max-w-6xl mx-auto p-6 space-y-6">
+      <header className="space-y-2">
+        <h1 className="text-2xl font-semibold">Monad Validator Diversity Map</h1>
+        <p className="text-sm opacity-80">
+          Network: <b>{network}</b> | Validators: <b>{snapshot.counts.total}</b> | Updated:{' '}
+          <b>{new Date(snapshot.generatedAt).toLocaleString()}</b>
+        </p>
+      </header>
+
+      <section className="flex flex-wrap gap-3 items-end">
+        <form className="flex flex-wrap gap-3 items-end" action="/" method="get">
+          <label className="flex flex-col text-sm gap-1">
+            Network
+            <select name="network" defaultValue={network} className="border rounded px-2 py-1">
+              <option value="testnet">testnet</option>
+              <option value="mainnet">mainnet</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col text-sm gap-1">
+            Search
+            <input
+              name="q"
+              defaultValue={searchParams.q ?? ''}
+              className="border rounded px-2 py-1"
+              placeholder="name or secp"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          </label>
+
+          <label className="flex flex-col text-sm gap-1">
+            Country
+            <select name="country" defaultValue={countryFilter} className="border rounded px-2 py-1">
+              <option value="">All</option>
+              {countries.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col text-sm gap-1">
+            Provider
+            <select name="provider" defaultValue={providerFilter} className="border rounded px-2 py-1">
+              <option value="">All</option>
+              {providers.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </label>
+
+          <button className="border rounded px-3 py-2 text-sm">Apply</button>
+        </form>
+      </section>
+
+      <section className="grid md:grid-cols-2 gap-4">
+        <div className="border rounded p-4">
+          <h2 className="font-semibold mb-2">Top Countries</h2>
+          <ul className="text-sm space-y-1">
+            {topCountries.map(([k, v]) => (
+              <li key={k} className="flex justify-between">
+                <span>{k}</span>
+                <span>{v}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-      </main>
-    </div>
+
+        <div className="border rounded p-4">
+          <h2 className="font-semibold mb-2">Top Providers</h2>
+          <ul className="text-sm space-y-1">
+            {topProviders.map(([k, v]) => (
+              <li key={k} className="flex justify-between">
+                <span>{k}</span>
+                <span>{v}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      <section className="border rounded overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left">
+              <th className="p-3">Validator</th>
+              <th className="p-3">Country</th>
+              <th className="p-3">City</th>
+              <th className="p-3">Provider</th>
+              <th className="p-3">Score</th>
+              <th className="p-3">Links</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(v => (
+              <tr key={v.id} className="border-t">
+                <td className="p-3">
+                  <div className="flex items-center gap-2">
+                    {v.logo ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={v.logo} alt="" className="w-6 h-6 rounded" />
+                    ) : null}
+                    <div className="flex flex-col">
+                      <span className="font-medium">{v.displayName}</span>
+                      <span className="opacity-70 text-xs">id {v.id}</span>
+                    </div>
+                  </div>
+                </td>
+                <td className="p-3">{v.country ?? 'Unknown'}</td>
+                <td className="p-3">{v.city ?? 'Unknown'}</td>
+                <td className="p-3">{v.provider ?? 'Unknown'}</td>
+                <td className="p-3">
+                  <div className="flex flex-col">
+                    <span className="font-semibold">{v.scores.total}</span>
+                    <span className="text-xs opacity-70">{v.scores.badge}</span>
+                  </div>
+                </td>
+                <td className="p-3">
+                  <div className="flex gap-3">
+                    {v.website ? (
+                      <a className="underline" href={v.website} target="_blank" rel="noreferrer">
+                        site
+                      </a>
+                    ) : null}
+                    {v.x ? (
+                      <a className="underline" href={v.x} target="_blank" rel="noreferrer">
+                        x
+                      </a>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {filtered.length === 0 ? (
+              <tr>
+                <td className="p-3 opacity-70" colSpan={6}>
+                  No results
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </section>
+
+      <footer className="text-xs opacity-70">
+        Data sources: gmonads public API and monad-developers validator-info.
+      </footer>
+    </main>
   );
 }
