@@ -40,6 +40,8 @@ export default async function Page({
     snapshot = await computeSnapshot(network);
   } catch (err) {
     console.error('Error computing snapshot:', err);
+    console.log('countryFilter:', countryFilter);
+    console.log('First few countries in data:', snapshot.validators.slice(0, 5).map(v => v.country));
     error = err instanceof Error ? err.message : 'Unknown error';
   }
 
