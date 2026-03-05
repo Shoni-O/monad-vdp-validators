@@ -115,9 +115,52 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   const geolocData = (geolocs?.data ?? []) as any[];
   const metaData = (metadata?.data ?? []) as any[];
 
-  // ... (весь подальший код з route.ts: мапи byKeyGeo, byKeyMeta, ipCache, geoFromIp, activeEpoch, baseRowsRaw, baseRows, counts, enriched, snapshot)
+  // ... (весь попередній код: activeEpoch, baseRowsRaw, baseRows)
 
-  // Ось ключовий момент — в кінці має бути щось таке:
+  // Обов'язково після dedupe
+  const counts = buildCounts(baseRows);
+
+  // Потім збагачення даних з GitHub + scoring
+  const enriched: EnrichedValidator[] = await Promise.all(
+    baseRows.map(async (row) => {
+      const gh = await tryFetchValidatorInfoFromGitHub(network, row.nodeId);
+
+      const displayName = safeStr(gh?.name) ?? makeDisplayName(row.merged, row.id);
+
+      const scores = scoreValidator({
+        country: row.country,
+        city: row.city,
+        provider: row.provider,
+        counts,   // ← counts вже існує
+      });
+
+      const fallbackKey = makeFallbackKey(row.merged, row.id);
+
+      return {
+        id: row.id,
+        secp: row.secp ?? fallbackKey,
+        bls: row.bls,
+
+        displayName,
+        website: safeStr(gh?.website) ?? safeStr(row.merged?.website),
+        description: safeStr(gh?.description) ?? safeStr(row.merged?.description),
+        logo: safeStr(gh?.logo) ?? safeStr(row.merged?.logo),
+        x: safeStr(gh?.x) ?? safeStr(row.merged?.x),
+
+        country: row.country ?? 'Unknown',
+        city: row.city ?? 'Unknown',
+        provider: row.provider ?? 'Unknown',
+
+        scores,
+        raw: { gmonads: row.merged, github: gh ?? undefined },
+      };
+    })
+  );
+
+  // Сортування
+  enriched.sort((a, b) => b.scores.total - a.scores.total);
+
+  // Тепер створюємо snapshot — тільки після enriched та counts
   const snapshot: Snapshot = {
     network,
     generatedAt: new Date().toISOString(),
@@ -130,5 +173,5 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     validators: enriched,
   };
 
-  return snapshot;  // ← саме тут повертаємо чистий Snapshot
+  return snapshot;
 }
