@@ -355,10 +355,18 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
 const SNAPSHOT_CACHE_SECONDS = 600;
 
+const getCachedTestnetSnapshot = unstable_cache(
+  async () => computeSnapshot('testnet'),
+  ['snapshot-testnet'],
+  { revalidate: SNAPSHOT_CACHE_SECONDS }
+);
+
+const getCachedMainnetSnapshot = unstable_cache(
+  async () => computeSnapshot('mainnet'),
+  ['snapshot-mainnet'],
+  { revalidate: SNAPSHOT_CACHE_SECONDS }
+);
+
 export function getCachedSnapshot(network: Network): Promise<Snapshot> {
-  return unstable_cache(
-    async () => computeSnapshot(network),
-    [`snapshot-${network}`],
-    { revalidate: SNAPSHOT_CACHE_SECONDS }
-  )();
+  return network === 'mainnet' ? getCachedMainnetSnapshot() : getCachedTestnetSnapshot();
 }
