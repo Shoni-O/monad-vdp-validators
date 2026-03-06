@@ -8,7 +8,7 @@ async function warm(network: 'testnet' | 'mainnet') {
     'http://localhost:3000';
 
   const url = `${base}/api/snapshot?network=${network}`;
-  await fetch(url, { method: 'GET', cache: 'no-store' });
+  await fetch(url, { method: 'GET' });
 }
 
 export async function GET(req: Request) {

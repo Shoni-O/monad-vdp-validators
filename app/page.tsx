@@ -2,16 +2,17 @@
 
 import type { Snapshot, Network } from '@/lib/types';
 import { headers } from 'next/headers';
-import { computeSnapshot } from '@/lib/getSnapshot';
+import { getCachedSnapshot } from '@/lib/getSnapshot';
+import ValidatorTable from '@/app/components/ValidatorTable';
+import NetworkSwitch from '@/app/components/NetworkSwitch';
+import ScoreExplanation from '@/app/components/ScoreExplanation';
 
 export const dynamic = 'force-dynamic';
 
 function getNetworkFromHost(host?: string | null): Network {
   const h = (host ?? '').toLowerCase();
-
   if (h.startsWith('monad-validators-testnet.')) return 'testnet';
   if (h.startsWith('monad-validators.')) return 'mainnet';
-
   return 'testnet';
 }
 
@@ -30,7 +31,7 @@ export default async function Page() {
     const headersList = await headers();
     const host = headersList.get('host');
     network = getNetworkFromHost(host);
-    snapshot = await computeSnapshot(network);
+    snapshot = await getCachedSnapshot(network);
   } catch (err) {
     console.error('Error computing snapshot:', err);
     error = err instanceof Error ? err.message : 'Unknown error';
@@ -41,17 +42,19 @@ export default async function Page() {
 
   if (error || !snapshot) {
     return (
-      <main className="max-w-6xl mx-auto p-6 text-center">
-        <h1 className="text-3xl font-bold text-red-600 mb-4">Something went wrong</h1>
-        <p className="text-lg mb-6">
+      <main className="mx-auto max-w-6xl p-6 text-center">
+        <h1 className="mb-4 text-3xl font-bold text-rose-600">Something went wrong</h1>
+        <p className="mb-6 text-lg">
           Failed to load validator data for <strong>{network}</strong>.
         </p>
-        <p className="text-sm text-gray-600 mb-4">{error || 'Please check server logs or try again later.'}</p>
+        <p className="mb-4 text-sm text-purple-600">
+          {error || 'Please check server logs or try again later.'}
+        </p>
         <div className="flex justify-center gap-4">
-          <a href={mainnetUrl} className="underline text-blue-600">
+          <a href={mainnetUrl} className="text-purple-600 underline hover:text-purple-800">
             Mainnet
           </a>
-          <a href={testnetUrl} className="underline text-blue-600">
+          <a href={testnetUrl} className="text-purple-600 underline hover:text-purple-800">
             Testnet
           </a>
         </div>
@@ -61,38 +64,34 @@ export default async function Page() {
 
   const topCountries = topEntries(snapshot.counts.byCountry, 8);
   const topProviders = topEntries(snapshot.counts.byProvider, 8);
+  const generatedAt = new Date(snapshot.generatedAt).toLocaleString();
 
   return (
-    <main className="max-w-6xl mx-auto p-6 space-y-6">
+    <main className="mx-auto max-w-6xl space-y-6 p-6">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Monad Validator Diversity Map</h1>
-        <p className="text-sm opacity-80">
-          Network: <b>{network}</b> | Validators: <b>{snapshot.counts.total}</b> | Updated:{' '}
-          <b>{new Date(snapshot.generatedAt).toLocaleString()}</b>
+        <h1 className="text-2xl font-semibold text-purple-900">
+          Monad Validator Diversity Map
+        </h1>
+        <p className="text-sm text-purple-700">
+          Network: <b>{network}</b> · Validators: <b>{snapshot.counts.total}</b> · Updated:{' '}
+          <b>{generatedAt}</b>
         </p>
       </header>
 
       <section className="flex justify-end">
-        <div className="flex gap-2 items-center">
-          <a
-            className={`border rounded px-3 py-2 text-sm ${network === 'mainnet' ? 'font-semibold' : ''}`}
-            href={mainnetUrl}
-          >
-            mainnet
-          </a>
-          <a
-            className={`border rounded px-3 py-2 text-sm ${network === 'testnet' ? 'font-semibold' : ''}`}
-            href={testnetUrl}
-          >
-            testnet
-          </a>
-        </div>
+        <NetworkSwitch
+          active={network}
+          mainnetUrl={mainnetUrl}
+          testnetUrl={testnetUrl}
+        />
       </section>
 
-      <section className="grid md:grid-cols-2 gap-4">
-        <div className="border rounded p-4">
-          <h2 className="font-semibold mb-2">Top Countries</h2>
-          <ul className="text-sm space-y-1">
+      <ScoreExplanation />
+
+      <section className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-lg border-2 border-purple-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-2 font-semibold text-purple-900">Top Countries</h2>
+          <ul className="space-y-1 text-sm text-purple-800">
             {topCountries.map(([k, v]) => (
               <li key={k} className="flex justify-between">
                 <span>{k}</span>
@@ -101,10 +100,9 @@ export default async function Page() {
             ))}
           </ul>
         </div>
-
-        <div className="border rounded p-4">
-          <h2 className="font-semibold mb-2">Top Providers</h2>
-          <ul className="text-sm space-y-1">
+        <div className="rounded-lg border-2 border-purple-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-2 font-semibold text-purple-900">Top Providers</h2>
+          <ul className="space-y-1 text-sm text-purple-800">
             {topProviders.map(([k, v]) => (
               <li key={k} className="flex justify-between">
                 <span>{k}</span>
@@ -115,68 +113,11 @@ export default async function Page() {
         </div>
       </section>
 
-      <section className="border rounded overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left">
-              <th className="p-3">Validator</th>
-              <th className="p-3">Country</th>
-              <th className="p-3">City</th>
-              <th className="p-3">Provider</th>
-              <th className="p-3">Score</th>
-              <th className="p-3">Links</th>
-            </tr>
-          </thead>
-          <tbody>
-            {snapshot.validators.map((v) => (
-              <tr key={v.id} className="border-t">
-                <td className="p-3">
-                  <div className="flex items-center gap-2">
-                    {v.logo ? <img src={v.logo} alt="" className="w-6 h-6 rounded" /> : null}
-                    <div className="flex flex-col">
-                      <span className="font-medium">{v.displayName}</span>
-                      <span className="opacity-70 text-xs">{v.secp ? v.secp : `id ${v.id}`}</span>
-                    </div>
-                  </div>
-                </td>
-                <td className="p-3">{v.country ?? 'Unknown'}</td>
-                <td className="p-3">{v.city ?? 'Unknown'}</td>
-                <td className="p-3">{v.provider ?? 'Unknown'}</td>
-                <td className="p-3">
-                  <div className="flex flex-col">
-                    <span className="font-semibold">{v.scores.total}</span>
-                    <span className="text-xs opacity-70">{v.scores.badge}</span>
-                  </div>
-                </td>
-                <td className="p-3">
-                  <div className="flex gap-3">
-                    {v.website ? (
-                      <a className="underline" href={v.website} target="_blank" rel="noreferrer">
-                        site
-                      </a>
-                    ) : null}
-                    {v.x ? (
-                      <a className="underline" href={v.x} target="_blank" rel="noreferrer">
-                        x
-                      </a>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            ))}
-
-            {snapshot.validators.length === 0 && (
-              <tr>
-                <td className="p-3 opacity-70 text-center" colSpan={6}>
-                  No validators found
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <section>
+        <ValidatorTable validators={snapshot.validators} />
       </section>
 
-      <footer className="text-xs opacity-70 text-center mt-8">
+      <footer className="mt-8 text-center text-xs text-purple-600">
         Data sources: gmonads public API and monad-developers validator-info.
       </footer>
     </main>
