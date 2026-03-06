@@ -1,11 +1,11 @@
 // lib/getSnapshot.ts
 
 import { unstable_cache } from 'next/cache';
+
+const GITHUB_CACHE_SECONDS = 86400; // 24h - validator-info changes rarely
 import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/lib/types';
 import { buildCounts, scoreValidator } from '@/lib/scoring';
 import { normalizeCountry } from '@/lib/countries';
-
-const GITHUB_FETCH_CONCURRENCY = 50;
 
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
@@ -28,17 +28,17 @@ function safeStr(v: any): string | undefined {
   return s.length ? s : undefined;
 }
 
-async function tryFetchValidatorInfoFromGitHub(network: Network, nodeId?: string) {
-  const nid = safeStr(nodeId);
-  if (!nid) return null;
-
-  const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nid}.json`;
-  const res = await fetch(rawUrl, {
-    next: { revalidate: 3600 },
-  });
-
-  if (!res.ok) return null;
-  return res.json();
+function getCachedValidatorInfo(network: Network, nodeId: string) {
+  return unstable_cache(
+    async () => {
+      const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nodeId}.json`;
+      const res = await fetch(rawUrl, { headers: { accept: 'application/json' } });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    [`github-validator-${network}-${nodeId}`],
+    { revalidate: GITHUB_CACHE_SECONDS }
+  )();
 }
 
 function normalizeProvider(v?: string) {
@@ -184,18 +184,35 @@ function rowQuality(r: {
   return q;
 }
 
-async function mapWithLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += limit) {
-    const chunk = items.slice(i, i + limit);
-    const chunkResults = await Promise.all(chunk.map(fn));
-    results.push(...chunkResults);
-  }
-  return results;
+function buildEnrichedRow(
+  row: { id: number; nodeId?: string; secp?: string; bls?: string; country?: string; city?: string; provider?: string; merged: any },
+  counts: { byCountry: Record<string, number>; byCity: Record<string, number>; byProvider: Record<string, number> },
+  gh: any
+): EnrichedValidator {
+  const displayName = safeStr(gh?.name) ?? makeDisplayName(row.merged, row.id);
+  const scores = scoreValidator({
+    country: row.country,
+    city: row.city,
+    provider: row.provider,
+    counts,
+  });
+  const fallbackKey = makeFallbackKey(row.merged, row.id);
+
+  return {
+    id: row.id,
+    secp: row.secp ?? fallbackKey,
+    bls: row.bls,
+    displayName,
+    website: safeStr(gh?.website) ?? safeStr(row.merged?.website),
+    description: safeStr(gh?.description) ?? safeStr(row.merged?.description),
+    logo: safeStr(gh?.logo) ?? safeStr(row.merged?.logo),
+    x: safeStr(gh?.x) ?? safeStr(row.merged?.x),
+    country: row.country ?? 'Unknown',
+    city: row.city ?? 'Unknown',
+    provider: row.provider ?? 'Unknown',
+    scores,
+    raw: { gmonads: row.merged, github: gh ?? undefined },
+  };
 }
 
 function dedupeById<T extends { id: number }>(rows: T[]) {
@@ -344,47 +361,22 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   const counts = buildCounts(baseRows);
 
-  const enriched: EnrichedValidator[] = await mapWithLimit(
-    baseRows,
-    GITHUB_FETCH_CONCURRENCY,
-    async (row) => {
-      const gh = await tryFetchValidatorInfoFromGitHub(network, row.nodeId);
+  // GitHub enrichment: skip to keep first render fast. All data has gmonads fallbacks.
+  // Set to true to fetch GitHub (cached 24h per validator) - slows first load.
+  const useGitHubEnrichment = process.env.ENABLE_GITHUB_ENRICHMENT === 'true';
 
-      const displayName = safeStr(gh?.name) ?? makeDisplayName(row.merged, row.id);
-
-      const scores = scoreValidator({
-        country: row.country,
-        city: row.city,
-        provider: row.provider,
-        counts,
-      });
-
-      const fallbackKey = makeFallbackKey(row.merged, row.id);
-
-      return {
-        id: row.id,
-        secp: row.secp ?? fallbackKey,
-        bls: row.bls,
-        displayName,
-        website: safeStr(gh?.website) ?? safeStr(row.merged?.website),
-        description: safeStr(gh?.description) ?? safeStr(row.merged?.description),
-        logo: safeStr(gh?.logo) ?? safeStr(row.merged?.logo),
-        x: safeStr(gh?.x) ?? safeStr(row.merged?.x),
-        country: row.country ?? 'Unknown',
-        city: row.city ?? 'Unknown',
-        provider: row.provider ?? 'Unknown',
-        scores,
-        raw: {
-          gmonads: row.merged,
-          github: gh ?? undefined,
-        },
-      };
-    }
-  );
+  const enriched: EnrichedValidator[] = useGitHubEnrichment
+    ? await Promise.all(
+        baseRows.map(async (row) => {
+          const gh = row.nodeId ? await getCachedValidatorInfo(network, row.nodeId) : null;
+          return buildEnrichedRow(row, counts, gh);
+        })
+      )
+    : baseRows.map((row) => buildEnrichedRow(row, counts, null));
 
   const t3 = Date.now();
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[snapshot] GitHub enrichment: ${t3 - t2}ms`);
+    console.log(`[snapshot] enrichment: ${t3 - t2}ms${useGitHubEnrichment ? ' (with GitHub)' : ' (gmonads only)'}`);
   }
 
   enriched.sort((a, b) => b.scores.total - a.scores.total);
