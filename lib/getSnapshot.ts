@@ -155,19 +155,22 @@ function getNumericId(x: any): number | undefined {
 function isActive(v: any): boolean {
   const tRaw = v?.validator_set_type;
   
-  // If validator_set_type is explicitly set to something
   if (tRaw !== undefined && tRaw !== null) {
     const t = String(tRaw).trim().toLowerCase();
-    // Only if it explicitly says 'inactive' or 'jailed', mark as inactive
-    if (t === 'inactive' || t === 'jailed' || t === 'unbonding') {
+    // Explicitly active
+    if (t === 'active') {
+      return true;
+    }
+    // Explicitly inactive states
+    if (t === 'inactive' || t === 'jailed' || t === 'unbonding' || t === 'registered') {
       return false;
     }
-    // Otherwise (if it's 'active' or any other value), treat as active
-    return true;
+    // Unknown status → treat as inactive (conservative)
+    return false;
   }
   
-  // If validator_set_type is missing/null, assume active
-  // (validators in the epoch data are presumed active unless explicitly marked otherwise)
+  // Missing/null validator_set_type in epoch data → treat as active
+  // (Only validators explicitly marked as 'registered'/'inactive'/'jailed'/'unbonding' are inactive)
   return true;
 }
 
@@ -296,24 +299,73 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     console.log(`[snapshot-debug] Validators in meta: ${byKeyMeta.size}`);
   }
 
-  // Create a set of active validator IDs from epoch
-  const activeIds = new Set<number>();
-  const validatorSetTypeDistribution: Record<string, number> = {};
+  // Build a canonical records map for each epoch ID (handling duplicates)
+  // When an ID appears multiple times, prefer 'active' > other values > 'registered'/'inactive'
+  const canonicalEpochEntry = new Map<number, any>();
   
   for (const v of epochData) {
     const k = getNumericId(v);
-    const vst = v?.validator_set_type;
-    const vstKey = vst === undefined ? 'undefined' : vst === null ? 'null' : String(vst).toLowerCase() || 'empty';
-    validatorSetTypeDistribution[vstKey] = (validatorSetTypeDistribution[vstKey] ?? 0) + 1;
+    if (typeof k !== 'number') continue;
     
-    if (typeof k === 'number' && isActive(v)) {
+    const existing = canonicalEpochEntry.get(k);
+    if (!existing) {
+      canonicalEpochEntry.set(k, v);
+      continue;
+    }
+    
+    // Pick the "better" record if we have duplicates
+    const existingType = String(existing?.validator_set_type ?? '').toLowerCase();
+    const newType = String(v?.validator_set_type ?? '').toLowerCase();
+    
+    // Preference order: 'active' > other known values > 'registered'/'inactive'/'jailed'/'unbonding' > undefined
+    const typeScore = (t: string) => {
+      if (t === 'active') return 100;
+      if (t === 'registered' || t === 'inactive' || t === 'jailed' || t === 'unbonding') return 10;
+      if (t && t.length > 0) return 50; // Other known values
+      return 0; // undefined/empty
+    };
+    
+    if (typeScore(newType) > typeScore(existingType)) {
+      canonicalEpochEntry.set(k, v);
+    }
+  }
+
+  // Create a set of active validator IDs from epoch (using canonical records)
+  const activeIds = new Set<number>();
+  const inactiveIds = new Set<number>();
+  const validatorSetTypeDistribution: Record<string, number> = {};
+  const samplesByType: Record<string, any> = {};
+  
+  for (const [k, v] of canonicalEpochEntry.entries()) {
+    const vst = v?.validator_set_type;
+    const vstStr = String(vst).trim().toLowerCase() || '(missing)';
+    validatorSetTypeDistribution[vstStr] = (validatorSetTypeDistribution[vstStr] ?? 0) + 1;
+    
+    // Keep a sample of each type for debugging
+    if (!samplesByType[vstStr]) {
+      samplesByType[vstStr] = { 
+        id: k, 
+        validator_set_type: v?.validator_set_type,
+        moniker: v?.moniker,
+        node_id: v?.node_id,
+      };
+    }
+    
+    if (isActive(v)) {
       activeIds.add(k);
+    } else {
+      inactiveIds.add(k);
     }
   }
 
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[snapshot-debug] Active validators in epoch: ${activeIds.size}`);
+    console.log(`[snapshot-debug] === EPOCH DATA ANALYSIS ===`);
+    console.log(`[snapshot-debug] Raw epoch rows: ${epochData.length}`);
+    console.log(`[snapshot-debug] After deduplication by ID: ${canonicalEpochEntry.size}`);
     console.log(`[snapshot-debug] Validator set type distribution:`, validatorSetTypeDistribution);
+    console.log(`[snapshot-debug] Marked as active from epoch: ${activeIds.size}`);
+    console.log(`[snapshot-debug] Marked as inactive from epoch: ${inactiveIds.size}`);
+    console.log(`[snapshot-debug] Sample validators by type:`, samplesByType);
   }
 
   // Check for validators only in geo/meta (not in epoch at all)
@@ -408,27 +460,15 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   // Process ALL validators (both active and inactive)
   const baseRowsRaw = await Promise.all(
     Array.from(allIds).map(async (id: number) => {
-      // Merge data from all sources
-      let epochEntry = epochData.find((v: any) => getNumericId(v) === id);
+      // Merge data from all sources (for enrichment only)
+      const epochEntry = epochData.find((v: any) => getNumericId(v) === id);
       const geo = byKeyGeo.get(id);
       const meta = byKeyMeta.get(id);
 
-      // If no direct ID match in epoch, try matching by node_id or moniker as fallback
-      if (!epochEntry && (geo || meta)) {
-        const targetNodeId = safeStr(geo?.node_id) ?? safeStr(meta?.node_id);
-        const targetMoniker = safeStr(geo?.moniker) ?? safeStr(meta?.moniker) ?? safeStr(geo?.name) ?? safeStr(meta?.name);
-        
-        if (targetNodeId) {
-          epochEntry = epochData.find((v: any) => safeStr(v?.node_id) === targetNodeId);
-        }
-        
-        if (!epochEntry && targetMoniker) {
-          epochEntry = epochData.find((v: any) => {
-            const eMoniker = safeStr(v?.moniker) ?? safeStr(v?.name);
-            return eMoniker && eMoniker.toLowerCase() === targetMoniker.toLowerCase();
-          });
-        }
-      }
+      // NOTE: Do NOT use moniker/name matching for status.
+      // Active status is determined purely by membership in activeIds set,
+      // which is computed strictly from epoch data with validator_set_type field.
+      // Moniker matching for enrichment purposes only (display names, etc).
 
       const merged = { ...epochEntry, ...meta, ...geo };
       const extracted = extractGeo(merged);
@@ -448,15 +488,18 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       
       // Debug Luganodes specifically
       const displayName = safeStr(merged?.name) ?? safeStr(merged?.displayName) ?? safeStr(merged?.moniker) ?? `Validator #${id}`;
+      // Determine active status: only from activeIds (computed strictly from epoch data)
+      const isActiveValidator = activeIds.has(id);
+      
       const isLuganodes = displayName.toLowerCase().includes('luganodes') || nodeId?.toLowerCase().includes('luganodes');
       
       if (isLuganodes && process.env.NODE_ENV === 'development') {
         console.log(`[luganodes-debug] Found Luganodes:`);
-        console.log(`  id: ${id}, in activeIds: ${activeIds.has(id)}`);
+        console.log(`  id: ${id}, in activeIds: ${isActiveValidator}`);
         console.log(`  displayName: ${displayName}`);
         console.log(`  nodeId: ${nodeId}`);
         console.log(`  secp: ${secp}`);
-        console.log(`  epochEntry matched: ${epochEntry ? 'YES' : 'NO (looked for ID, node_id, moniker)'}`);
+        console.log(`  epochEntry exists: ${epochEntry ? 'YES' : 'NO'}`);
         if (epochEntry) {
           console.log(`    epochEntry.validator_set_type: ${epochEntry.validator_set_type}`);
           console.log(`    epochEntry.moniker: ${epochEntry.moniker}`);
@@ -475,7 +518,7 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         city,
         provider,
         merged,
-        isActive: epochEntry ? isActive(epochEntry) : false,
+        isActive: isActiveValidator,
       };
     })
   );
@@ -485,7 +528,29 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   if (process.env.NODE_ENV === 'development') {
     const activeCount = baseRows.filter((r) => (r as any).isActive).length;
     const inactiveCount = baseRows.length - activeCount;
-    console.log(`[snapshot-debug] After deduplication: ${baseRows.length} total (${activeCount} active, ${inactiveCount} inactive)`);
+    console.log(`[snapshot-debug] === FINAL COUNTS AFTER DEDUP AND ID FILTER ===`);
+    console.log(`[snapshot-debug] Total: ${baseRows.length}`);
+    console.log(`[snapshot-debug] Active: ${activeCount}`);
+    console.log(`[snapshot-debug] Inactive: ${inactiveCount}`);
+    
+    // Show breakdown of inactive validators by source
+    const inactiveRows = baseRows.filter((r) => !(r as any).isActive);
+    const inactiveInEpoch = inactiveRows.filter((r) => inactiveIds.has(r.id));
+    const inactiveNotInEpoch = inactiveRows.filter((r) => !epochIds.has(r.id));
+    
+    console.log(`[snapshot-debug] Inactive validators:`);
+    console.log(`  - From epoch (marked inactive): ${inactiveInEpoch.length}`);
+    console.log(`  - From geo/meta (not in epoch): ${inactiveNotInEpoch.length}`);
+    
+    if (inactiveRows.length > 0 && inactiveRows.length <= 50) {
+      console.log(`[snapshot-debug] First 10 inactive validators:`);
+      inactiveRows.slice(0, 10).forEach((r: any) => {
+        const inEpoch = epochIds.has(r.id) ? 'EPOCH' : 'GEO/META';
+        const vstatus = inactiveIds.has(r.id) ? '(marked inactive in epoch)' : '(not in epoch)';
+        const moniker = safeStr(r.merged?.moniker) ?? 'N/A';
+        console.log(`    ID ${r.id} [${inEpoch}] ${vstatus}: ${moniker}`);
+      });
+    }
   }
 
   const t2 = Date.now();
