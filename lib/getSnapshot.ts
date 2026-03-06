@@ -10,7 +10,11 @@ async function fetchJson(url: string) {
     next: { revalidate: 300 },
     headers: { accept: 'application/json' },
   });
-  if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
+
+  if (!res.ok) {
+    throw new Error(`Fetch failed ${res.status} for ${url}`);
+  }
+
   return res.json();
 }
 
@@ -25,7 +29,10 @@ async function tryFetchValidatorInfoFromGitHub(network: Network, nodeId?: string
   if (!nid) return null;
 
   const rawUrl = `https://raw.githubusercontent.com/monad-developers/validator-info/main/${network}/${nid}.json`;
-  const res = await fetch(rawUrl, { next: { revalidate: 3600 } });
+  const res = await fetch(rawUrl, {
+    next: { revalidate: 3600 },
+  });
+
   if (!res.ok) return null;
   return res.json();
 }
@@ -61,10 +68,18 @@ function extractGeo(meta: any): { country?: string; city?: string; provider?: st
     safeStr(meta?.org) ??
     safeStr(meta?.isp);
 
-  return { country, city, provider: normalizeProvider(providerRaw) };
+  return {
+    country,
+    city,
+    provider: normalizeProvider(providerRaw),
+  };
 }
 
-type IpGeo = { country?: string; city?: string; provider?: string };
+type IpGeo = {
+  country?: string;
+  city?: string;
+  provider?: string;
+};
 
 function pickIp(row: any): string | undefined {
   return safeStr(row?.ip_address) ?? safeStr(row?.ip) ?? safeStr(row?.ipv4);
@@ -117,15 +132,26 @@ function makeFallbackKey(merged: any, id: number): string | undefined {
 function getNumericId(x: any): number | undefined {
   if (typeof x?.id === 'number') return x.id;
   if (typeof x?.val_index === 'number') return x.val_index;
-  if (typeof x?.id === 'string' && x.id.trim() && Number.isFinite(Number(x.id))) return Number(x.id);
-  if (typeof x?.val_index === 'string' && x.val_index.trim() && Number.isFinite(Number(x.val_index)))
+
+  if (typeof x?.id === 'string' && x.id.trim() && Number.isFinite(Number(x.id))) {
+    return Number(x.id);
+  }
+
+  if (
+    typeof x?.val_index === 'string' &&
+    x.val_index.trim() &&
+    Number.isFinite(Number(x.val_index))
+  ) {
     return Number(x.val_index);
+  }
+
   return undefined;
 }
 
 function isActive(v: any): boolean {
   const tRaw = v?.validator_set_type;
   if (tRaw === undefined || tRaw === null || tRaw === '') return true;
+
   const t = String(tRaw).trim().toLowerCase();
   return t === 'active';
 }
@@ -139,27 +165,36 @@ function rowQuality(r: {
   merged?: any;
 }) {
   let q = 0;
+
   if (r.country) q += 3;
   if (r.city) q += 2;
   if (r.provider) q += 2;
   if (r.nodeId) q += 2;
   if (r.secp) q += 1;
+
   const ts = r.merged?.timestamp ? Date.parse(r.merged.timestamp) : 0;
-  if (Number.isFinite(ts) && ts > 0) q += Math.min(3, Math.floor(ts / 1_000_000_000));
+  if (Number.isFinite(ts) && ts > 0) {
+    q += Math.min(3, Math.floor(ts / 1_000_000_000));
+  }
+
   return q;
 }
 
 function dedupeById<T extends { id: number }>(rows: T[]) {
   const map = new Map<number, T>();
+
   for (const r of rows) {
     const prev = map.get(r.id);
+
     if (!prev) {
       map.set(r.id, r);
       continue;
     }
+
     const keep = rowQuality(r as any) >= rowQuality(prev as any) ? r : prev;
     map.set(r.id, keep);
   }
+
   return Array.from(map.values());
 }
 
@@ -199,8 +234,11 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       return empty;
     }
 
-    const res = await fetch(url, {
+    const ipinfoUrl = `https://ipinfo.io/${ip}?token=${token}`;
+
+    const res = await fetch(ipinfoUrl, {
       next: { revalidate: 86400 },
+      headers: { accept: 'application/json' },
     });
 
     if (!res.ok) {
@@ -221,10 +259,8 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     return out;
   }
 
-  // 1) active validators
   const activeEpoch = epochData.filter(isActive);
 
-  // 2) base rows with geo + ip fallback
   const baseRowsRaw = await Promise.all(
     activeEpoch.map(async (v: any) => {
       const key = getNumericId(v);
@@ -233,7 +269,6 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const meta = typeof key === 'number' ? byKeyMeta.get(key) : undefined;
 
       const merged = { ...v, ...meta, ...geo };
-
       const extracted = extractGeo(merged);
 
       const ip = pickIp(merged);
@@ -244,13 +279,12 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const city = extracted.city ?? ipGeo.city;
       const provider = extracted.provider ?? ipGeo.provider;
 
-      const nodeId = safeStr(merged?.node_id) ?? safeStr((v as any)?.node_id);
-
+      const nodeId = safeStr(merged?.node_id) ?? safeStr(v?.node_id);
       const secp = normalizeSecp(merged) ?? safeStr(merged?.auth_address) ?? undefined;
-      const bls = safeStr(merged?.bls) ?? safeStr((v as any)?.bls);
+      const bls = safeStr(merged?.bls) ?? safeStr(v?.bls);
 
       return {
-        id: typeof key === 'number' ? key : (typeof v?.id === 'number' ? v.id : 0),
+        id: typeof key === "number" ? key : typeof v?.id === "number" ? v.id : 0,
         nodeId,
         secp,
         bls,
@@ -262,13 +296,9 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     })
   );
 
-  // 3) deduplicate
-  const baseRows = dedupeById(baseRowsRaw).filter(r => r.id !== 0);
-
-  // 4) counts
+  const baseRows = dedupeById(baseRowsRaw).filter((r) => r.id !== 0);
   const counts = buildCounts(baseRows);
 
-  // 5) enrich with GitHub info + scoring
   const enriched: EnrichedValidator[] = await Promise.all(
     baseRows.map(async (row) => {
       const gh = await tryFetchValidatorInfoFromGitHub(network, row.nodeId);
@@ -297,14 +327,17 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         city: row.city ?? 'Unknown',
         provider: row.provider ?? 'Unknown',
         scores,
-        raw: { gmonads: row.merged, github: gh ?? undefined },
+        raw: {
+          gmonads: row.merged,
+          github: gh ?? undefined,
+        },
       };
     })
   );
 
   enriched.sort((a, b) => b.scores.total - a.scores.total);
 
-  const snapshot: Snapshot = {
+  return {
     network,
     generatedAt: new Date().toISOString(),
     counts: {
@@ -315,6 +348,4 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     },
     validators: enriched,
   };
-
-  return snapshot;
 }
