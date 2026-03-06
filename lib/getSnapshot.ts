@@ -247,21 +247,26 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   }
 
   const ipCache = new Map<string, IpGeo>();
+  const ipPending = new Map<string, Promise<IpGeo>>();
 
   async function geoFromIp(ip?: string): Promise<IpGeo> {
     if (!ip) return {};
     if (ipCache.has(ip)) return ipCache.get(ip)!;
 
+    let pending = ipPending.get(ip);
+    if (pending) return pending;
+
     const token = safeStr(process.env.IPINFO_TOKEN);
-    if (!token) {
-      const empty: IpGeo = {};
-      ipCache.set(ip, empty);
-      return empty;
-    }
+    pending = (async (): Promise<IpGeo> => {
+      if (!token) {
+        const empty: IpGeo = {};
+        ipCache.set(ip, empty);
+        return empty;
+      }
 
-    const ipinfoUrl = `https://ipinfo.io/${ip}?token=${token}`;
+      const ipinfoUrl = `https://ipinfo.io/${ip}?token=${token}`;
 
-    const res = await fetch(ipinfoUrl, {
+      const res = await fetch(ipinfoUrl, {
       next: { revalidate: 86400 },
       headers: { accept: 'application/json' },
     });
@@ -274,15 +279,23 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
     const j = await res.json();
 
-    const rawCountry = safeStr(j?.country);
-    const out: IpGeo = {
-      country: rawCountry ? normalizeCountry(rawCountry) : undefined,
-      city: safeStr(j?.city),
-      provider: normalizeProvider(safeStr(j?.org) ?? safeStr(j?.hostname)),
-    };
+      const rawCountry = safeStr(j?.country);
+      const out: IpGeo = {
+        country: rawCountry ? normalizeCountry(rawCountry) : undefined,
+        city: safeStr(j?.city),
+        provider: normalizeProvider(safeStr(j?.org) ?? safeStr(j?.hostname)),
+      };
 
-    ipCache.set(ip, out);
-    return out;
+      ipCache.set(ip, out);
+      return out;
+    })();
+
+    ipPending.set(ip, pending);
+    try {
+      return await pending;
+    } finally {
+      ipPending.delete(ip);
+    }
   }
 
   const activeEpoch = epochData.filter(isActive);
