@@ -154,8 +154,10 @@ function getNumericId(x: any): number | undefined {
 
 function isActive(v: any): boolean {
   const tRaw = v?.validator_set_type;
-  if (tRaw === undefined || tRaw === null || tRaw === '') return true;
-
+  // Only return true if explicitly marked as 'active'
+  // If field is missing/undefined/null/empty, we cannot assume it's active
+  if (tRaw === undefined || tRaw === null) return false;
+  
   const t = String(tRaw).trim().toLowerCase();
   return t === 'active';
 }
@@ -274,8 +276,14 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   // Create a set of active validator IDs from epoch
   const activeIds = new Set<number>();
+  const validatorSetTypeDistribution: Record<string, number> = {};
+  
   for (const v of epochData) {
     const k = getNumericId(v);
+    const vst = v?.validator_set_type;
+    const vstKey = vst === undefined ? 'undefined' : vst === null ? 'null' : String(vst).toLowerCase() || 'empty';
+    validatorSetTypeDistribution[vstKey] = (validatorSetTypeDistribution[vstKey] ?? 0) + 1;
+    
     if (typeof k === 'number' && isActive(v)) {
       activeIds.add(k);
     }
@@ -283,6 +291,7 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   if (process.env.NODE_ENV === 'development') {
     console.log(`[snapshot-debug] Active validators in epoch: ${activeIds.size}`);
+    console.log(`[snapshot-debug] Validator set type distribution:`, validatorSetTypeDistribution);
   }
 
   // Collect all unique validator IDs from all sources

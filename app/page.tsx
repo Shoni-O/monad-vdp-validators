@@ -45,10 +45,10 @@ export default async function Page() {
     return (
       <main className="mx-auto max-w-6xl p-6 text-center">
         <h1 className="mb-4 text-3xl font-bold text-rose-600 dark:text-rose-400">Something went wrong</h1>
-        <p className="mb-6 text-lg dark:text-purple-200">
+        <p className="mb-6 text-lg dark:text-purple-100">
           Failed to load validator data for <strong>{network}</strong>.
         </p>
-        <p className="mb-4 text-sm text-purple-600 dark:text-purple-400">
+        <p className="mb-4 text-sm text-purple-600 dark:text-purple-300">
           {error || 'Please check server logs or try again later.'}
         </p>
         <div className="flex justify-center gap-4">
@@ -70,17 +70,17 @@ export default async function Page() {
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 p-6">
-      <div className="flex items-start justify-between">
-        <header className="space-y-3 flex-1">
-          <h1 className="text-3xl font-bold text-purple-900 dark:text-purple-100">
+      <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+        <header className="space-y-3 flex-1 min-w-0">
+          <h1 className="text-3xl font-bold text-purple-900 dark:text-white">
             Monad Validator Diversity Map
           </h1>
-          <p className="text-sm text-purple-700 dark:text-purple-300">
+          <p className="text-sm text-purple-700 dark:text-purple-200">
             Network: <b>{network}</b> · Updated: <b>{generatedAt}</b>
           </p>
         </header>
         
-        <div className="flex gap-3 items-center">
+        <div className="flex gap-3 items-center flex-shrink-0">
           <NetworkSwitch
             active={network}
             mainnetUrl={mainnetUrl}
@@ -91,41 +91,41 @@ export default async function Page() {
       </div>
 
       <section className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-lg border-2 border-purple-200 bg-white p-4 shadow-sm dark:border-purple-800 dark:bg-purple-950">
-          <h3 className="text-sm font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">Total Validators</h3>
-          <p className="mt-2 text-3xl font-bold text-purple-900 dark:text-purple-100">{snapshot.counts.total}</p>
+        <div className="rounded-lg border border-purple-200 bg-gradient-to-br from-white to-purple-50 p-4 shadow-sm dark:border-purple-700 dark:from-purple-950 dark:to-purple-900">
+          <h3 className="text-sm font-bold text-purple-600 dark:text-purple-300 uppercase tracking-wide">Total Validators</h3>
+          <p className="mt-2 text-3xl font-bold text-purple-900 dark:text-white">{snapshot.counts.total}</p>
         </div>
-        <div className="rounded-lg border-2 border-green-200 bg-white p-4 shadow-sm dark:border-green-800 dark:bg-green-950">
-          <h3 className="text-sm font-semibold text-green-600 dark:text-green-400 uppercase tracking-wide">Active Validators</h3>
+        <div className="rounded-lg border border-green-200 bg-gradient-to-br from-white to-green-50 p-4 shadow-sm dark:border-green-700 dark:from-green-950 dark:to-green-900">
+          <h3 className="text-sm font-bold text-green-600 dark:text-green-300 uppercase tracking-wide">Active Validators</h3>
           <p className="mt-2 text-3xl font-bold text-green-900 dark:text-green-100">{snapshot.counts.active}</p>
         </div>
-        <div className="rounded-lg border-2 border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-950">
-          <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Inactive Validators</h3>
-          <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-gray-100">{inactiveCount}</p>
+        <div className="rounded-lg border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm dark:border-slate-700 dark:from-slate-950 dark:to-slate-900">
+          <h3 className="text-sm font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wide">Inactive Validators</h3>
+          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{inactiveCount}</p>
         </div>
       </section>
 
       <ScoreExplanation />
 
       <section className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border-2 border-purple-200 bg-white p-4 shadow-sm dark:border-purple-800 dark:bg-purple-950">
-          <h2 className="mb-3 font-semibold text-purple-900 dark:text-purple-100">Top Countries</h2>
+        <div className="rounded-lg border border-purple-200 bg-white p-4 shadow-sm dark:border-purple-700 dark:bg-purple-950">
+          <h2 className="mb-3 font-semibold text-purple-900 dark:text-white">Top Countries</h2>
           <ul className="space-y-2 text-sm">
             {topCountries.map(([k, v]) => (
-              <li key={k} className="flex justify-between text-purple-800 dark:text-purple-200">
+              <li key={k} className="flex justify-between text-purple-800 dark:text-purple-100">
                 <span>{k}</span>
-                <span className="font-medium">{v}</span>
+                <span className="font-medium text-purple-900 dark:text-white">{v}</span>
               </li>
             ))}
           </ul>
         </div>
-        <div className="rounded-lg border-2 border-purple-200 bg-white p-4 shadow-sm dark:border-purple-800 dark:bg-purple-950">
-          <h2 className="mb-3 font-semibold text-purple-900 dark:text-purple-100">Top Providers</h2>
+        <div className="rounded-lg border border-purple-200 bg-white p-4 shadow-sm dark:border-purple-700 dark:bg-purple-950">
+          <h2 className="mb-3 font-semibold text-purple-900 dark:text-white">Top Providers</h2>
           <ul className="space-y-2 text-sm">
             {topProviders.map(([k, v]) => (
-              <li key={k} className="flex justify-between text-purple-800 dark:text-purple-200">
+              <li key={k} className="flex justify-between text-purple-800 dark:text-purple-100">
                 <span>{k}</span>
-                <span className="font-medium">{v}</span>
+                <span className="font-medium text-purple-900 dark:text-white">{v}</span>
               </li>
             ))}
           </ul>
