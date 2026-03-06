@@ -3,6 +3,9 @@
 import { unstable_cache } from 'next/cache';
 import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/lib/types';
 import { buildCounts, scoreValidator } from '@/lib/scoring';
+import { normalizeCountry } from '@/lib/countries';
+
+const GITHUB_FETCH_CONCURRENCY = 50;
 
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
@@ -181,6 +184,20 @@ function rowQuality(r: {
   return q;
 }
 
+async function mapWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const chunk = items.slice(i, i + limit);
+    const chunkResults = await Promise.all(chunk.map(fn));
+    results.push(...chunkResults);
+  }
+  return results;
+}
+
 function dedupeById<T extends { id: number }>(rows: T[]) {
   const map = new Map<number, T>();
 
@@ -200,11 +217,18 @@ function dedupeById<T extends { id: number }>(rows: T[]) {
 }
 
 export async function computeSnapshot(network: Network): Promise<Snapshot> {
+  const t0 = Date.now();
+
   const [epoch, geolocs, metadata] = await Promise.all([
     fetchJson(`${GMONADS_BASE}/validators/epoch?network=${network}`),
     fetchJson(`${GMONADS_BASE}/validators/geolocations?network=${network}`),
     fetchJson(`${GMONADS_BASE}/validators/metadata?network=${network}`),
   ]);
+
+  const t1 = Date.now();
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot] gmonads fetch: ${t1 - t0}ms`);
+  }
 
   const epochData = (epoch?.data ?? []) as GmonadsValidator[];
   const geolocData = (geolocs?.data ?? []) as any[];
@@ -250,8 +274,9 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
     const j = await res.json();
 
+    const rawCountry = safeStr(j?.country);
     const out: IpGeo = {
-      country: safeStr(j?.country),
+      country: rawCountry ? normalizeCountry(rawCountry) : undefined,
       city: safeStr(j?.city),
       provider: normalizeProvider(safeStr(j?.org) ?? safeStr(j?.hostname)),
     };
@@ -276,7 +301,8 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const needsIp = !extracted.country || !extracted.city || !extracted.provider;
       const ipGeo = needsIp ? await geoFromIp(ip) : {};
 
-      const country = extracted.country ?? ipGeo.country;
+      const rawCountry = extracted.country ?? ipGeo.country;
+      const country = normalizeCountry(rawCountry);
       const city = extracted.city ?? ipGeo.city;
       const provider = extracted.provider ?? ipGeo.provider;
 
@@ -298,10 +324,17 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   );
 
   const baseRows = dedupeById(baseRowsRaw).filter((r) => r.id !== 0);
+  const t2 = Date.now();
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot] baseRows + IP geo: ${t2 - t1}ms`);
+  }
+
   const counts = buildCounts(baseRows);
 
-  const enriched: EnrichedValidator[] = await Promise.all(
-    baseRows.map(async (row) => {
+  const enriched: EnrichedValidator[] = await mapWithLimit(
+    baseRows,
+    GITHUB_FETCH_CONCURRENCY,
+    async (row) => {
       const gh = await tryFetchValidatorInfoFromGitHub(network, row.nodeId);
 
       const displayName = safeStr(gh?.name) ?? makeDisplayName(row.merged, row.id);
@@ -333,12 +366,20 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
           github: gh ?? undefined,
         },
       };
-    })
+    }
   );
+
+  const t3 = Date.now();
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot] GitHub enrichment: ${t3 - t2}ms`);
+  }
 
   enriched.sort((a, b) => b.scores.total - a.scores.total);
 
   const generatedAt = new Date().toISOString();
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot] total: ${Date.now() - t0}ms`);
+  }
 
   return {
     network,
