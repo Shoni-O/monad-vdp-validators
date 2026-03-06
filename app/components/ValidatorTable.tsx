@@ -160,115 +160,122 @@ export default function ValidatorTable({ validators }: { validators: EnrichedVal
         )}
       </div>
 
-      <section className="overflow-x-auto rounded-lg border border-purple-200 bg-white shadow-sm dark:border-purple-800 dark:bg-purple-950 -mx-6 md:mx-0">
-        <div className="inline-block min-w-full">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-purple-100 dark:bg-purple-900">
-              <tr className="text-left border-b border-purple-200 dark:border-purple-800">
-                <SortHeader
-                  label="Validator"
-                  sortKey="displayName"
-                  currentKey={sortKey}
-                  dir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Status"
-                  sortKey="status"
-                  currentKey={sortKey}
-                  dir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Country"
-                  sortKey="country"
-                  currentKey={sortKey}
-                  dir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="City"
-                  sortKey="city"
-                  currentKey={sortKey}
-                  dir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Provider"
-                  sortKey="provider"
-                  currentKey={sortKey}
-                  dir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Score"
-                  sortKey="total"
-                  currentKey={sortKey}
-                  dir={sortDir}
-                  onSort={handleSort}
-                />
-                <th className="p-2 whitespace-nowrap dark:text-purple-100">Links</th>
+      <section className="overflow-x-auto rounded-lg border border-purple-200 bg-white shadow-sm dark:border-purple-800 dark:bg-purple-950">
+        <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '180px' }} />
+            <col style={{ width: '110px' }} />
+            <col style={{ width: '100px' }} />
+            <col style={{ width: '90px' }} />
+            <col style={{ width: '140px' }} />
+            <col style={{ width: '70px' }} />
+            <col style={{ width: '80px' }} />
+          </colgroup>
+          <thead className="sticky top-0 bg-purple-100 dark:bg-purple-900">
+            <tr className="text-left border-b border-purple-200 dark:border-purple-800">
+              <SortHeader
+                label="Validator"
+                sortKey="displayName"
+                currentKey={sortKey}
+                dir={sortDir}
+                onSort={handleSort}
+              />
+              <SortHeader
+                label="Status"
+                sortKey="status"
+                currentKey={sortKey}
+                dir={sortDir}
+                onSort={handleSort}
+              />
+              <SortHeader
+                label="Country"
+                sortKey="country"
+                currentKey={sortKey}
+                dir={sortDir}
+                onSort={handleSort}
+              />
+              <SortHeader
+                label="City"
+                sortKey="city"
+                currentKey={sortKey}
+                dir={sortDir}
+                onSort={handleSort}
+              />
+              <SortHeader
+                label="Provider"
+                sortKey="provider"
+                currentKey={sortKey}
+                dir={sortDir}
+                onSort={handleSort}
+              />
+              <SortHeader
+                label="Score"
+                sortKey="total"
+                currentKey={sortKey}
+                dir={sortDir}
+                onSort={handleSort}
+              />
+              <th className="p-2 text-xs font-bold text-purple-900 dark:text-purple-50 dark:hover:bg-purple-800">Links</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((v) => (
+              <tr key={v.id} className="border-t border-purple-100 transition-colors hover:bg-purple-50/70 dark:border-purple-900 dark:hover:bg-purple-900/50 dark:text-purple-100">
+                <td className="p-2 overflow-hidden">
+                  <div className="flex items-center gap-1.5">
+                    {v.logo ? (
+                      <img src={v.logo} alt="" className="h-5 w-5 rounded flex-shrink-0" />
+                    ) : null}
+                    <span className="font-medium text-purple-900 dark:text-purple-50 truncate text-xs" title={v.displayName}>{v.displayName}</span>
+                  </div>
+                </td>
+                <td className="p-2 overflow-hidden">
+                  <StatusBadge status={v.status} />
+                </td>
+                <td className="p-2 text-purple-800 dark:text-purple-200 overflow-hidden truncate text-xs">{v.country ?? 'Unknown'}</td>
+                <td className="p-2 text-purple-800 dark:text-purple-200 overflow-hidden truncate text-xs">{v.city ?? 'Unknown'}</td>
+                <td className="p-2 text-purple-800 dark:text-purple-200 overflow-hidden truncate text-xs">{v.provider ?? 'Unknown'}</td>
+                <td className="p-2 overflow-hidden">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-semibold text-purple-900 dark:text-purple-50 text-xs">{v.scores.total}</span>
+                    <Badge badge={v.scores.badge} />
+                  </div>
+                </td>
+                <td className="p-2 overflow-hidden">
+                  <div className="flex gap-1 flex-wrap">
+                    {v.website ? (
+                      <a
+                        className="text-purple-600 underline hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300 text-xs"
+                        href={v.website}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        site
+                      </a>
+                    ) : null}
+                    {v.x ? (
+                      <a
+                        className="text-purple-600 underline hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300 text-xs"
+                        href={v.x}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        x
+                      </a>
+                    ) : null}
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {sorted.map((v) => (
-                <tr key={v.id} className="border-t border-purple-100 transition-colors hover:bg-purple-50/70 dark:border-purple-900 dark:hover:bg-purple-900/50 dark:text-purple-100">
-                  <td className="p-2 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
-                      {v.logo ? (
-                        <img src={v.logo} alt="" className="h-5 w-5 rounded flex-shrink-0" />
-                      ) : null}
-                      <span className="font-medium text-purple-900 dark:text-purple-50 truncate">{v.displayName}</span>
-                    </div>
-                  </td>
-                  <td className="p-2 whitespace-nowrap">
-                    <StatusBadge status={v.status} />
-                  </td>
-                  <td className="p-2 text-purple-800 dark:text-purple-200 whitespace-nowrap">{v.country ?? 'Unknown'}</td>
-                  <td className="p-2 text-purple-800 dark:text-purple-200 whitespace-nowrap">{v.city ?? 'Unknown'}</td>
-                  <td className="p-2 text-purple-800 dark:text-purple-200 whitespace-nowrap max-w-xs truncate">{v.provider ?? 'Unknown'}</td>
-                  <td className="p-2 whitespace-nowrap">
-                    <div className="flex flex-col gap-1">
-                      <span className="font-semibold text-purple-900 dark:text-purple-50">{v.scores.total}</span>
-                      <Badge badge={v.scores.badge} />
-                    </div>
-                  </td>
-                  <td className="p-2 whitespace-nowrap">
-                    <div className="flex gap-2">
-                      {v.website ? (
-                        <a
-                          className="text-purple-600 underline hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300 text-xs"
-                          href={v.website}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          site
-                        </a>
-                      ) : null}
-                      {v.x ? (
-                        <a
-                          className="text-purple-600 underline hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300 text-xs"
-                          href={v.x}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          x
-                        </a>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {sorted.length === 0 && (
-                <tr>
-                  <td className="p-6 text-center text-purple-600/70 dark:text-purple-400/70" colSpan={7}>
-                    No validators found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            ))}
+            {sorted.length === 0 && (
+              <tr>
+                <td className="p-6 text-center text-purple-600/70 dark:text-purple-400/70" colSpan={7}>
+                  No validators found
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </section>
     </div>
   );

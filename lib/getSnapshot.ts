@@ -154,12 +154,21 @@ function getNumericId(x: any): number | undefined {
 
 function isActive(v: any): boolean {
   const tRaw = v?.validator_set_type;
-  // Only return true if explicitly marked as 'active'
-  // If field is missing/undefined/null/empty, we cannot assume it's active
-  if (tRaw === undefined || tRaw === null) return false;
   
-  const t = String(tRaw).trim().toLowerCase();
-  return t === 'active';
+  // If validator_set_type is explicitly set to something
+  if (tRaw !== undefined && tRaw !== null) {
+    const t = String(tRaw).trim().toLowerCase();
+    // Only if it explicitly says 'inactive' or 'jailed', mark as inactive
+    if (t === 'inactive' || t === 'jailed' || t === 'unbonding') {
+      return false;
+    }
+    // Otherwise (if it's 'active' or any other value), treat as active
+    return true;
+  }
+  
+  // If validator_set_type is missing/null, assume active
+  // (validators in the epoch data are presumed active unless explicitly marked otherwise)
+  return true;
 }
 
 function rowQuality(r: {
@@ -274,6 +283,19 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     if (typeof k === 'number') byKeyMeta.set(k, m);
   }
 
+  // Create a set of all validator IDs from epoch for easier lookup
+  const epochIds = new Set<number>();
+  for (const v of epochData) {
+    const k = getNumericId(v);
+    if (typeof k === 'number') epochIds.add(k);
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot-debug] Validators in epoch: ${epochIds.size}`);
+    console.log(`[snapshot-debug] Validators in geo: ${byKeyGeo.size}`);
+    console.log(`[snapshot-debug] Validators in meta: ${byKeyMeta.size}`);
+  }
+
   // Create a set of active validator IDs from epoch
   const activeIds = new Set<number>();
   const validatorSetTypeDistribution: Record<string, number> = {};
@@ -292,6 +314,26 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   if (process.env.NODE_ENV === 'development') {
     console.log(`[snapshot-debug] Active validators in epoch: ${activeIds.size}`);
     console.log(`[snapshot-debug] Validator set type distribution:`, validatorSetTypeDistribution);
+  }
+
+  // Check for validators only in geo/meta (not in epoch at all)
+  const validatorsNotInEpoch = new Set<number>();
+  for (const id of byKeyGeo.keys()) {
+    if (!epochIds.has(id)) validatorsNotInEpoch.add(id);
+  }
+  for (const id of byKeyMeta.keys()) {
+    if (!epochIds.has(id)) validatorsNotInEpoch.add(id);
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot-debug] Validators in geo/meta but NOT in epoch: ${validatorsNotInEpoch.size}`);
+    // Log first few for debugging
+    Array.from(validatorsNotInEpoch).slice(0, 5).forEach((id) => {
+      const meta = byKeyMeta.get(id);
+      const geo = byKeyGeo.get(id);
+      const name = safeStr(meta?.name) ?? safeStr(meta?.moniker) ?? safeStr(geo?.moniker) ?? `id ${id}`;
+      console.log(`  [not-in-epoch] ${id}: ${name}`);
+    });
   }
 
   // Collect all unique validator IDs from all sources
@@ -367,9 +409,26 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   const baseRowsRaw = await Promise.all(
     Array.from(allIds).map(async (id: number) => {
       // Merge data from all sources
-      const epochEntry = epochData.find((v: any) => getNumericId(v) === id);
+      let epochEntry = epochData.find((v: any) => getNumericId(v) === id);
       const geo = byKeyGeo.get(id);
       const meta = byKeyMeta.get(id);
+
+      // If no direct ID match in epoch, try matching by node_id or moniker as fallback
+      if (!epochEntry && (geo || meta)) {
+        const targetNodeId = safeStr(geo?.node_id) ?? safeStr(meta?.node_id);
+        const targetMoniker = safeStr(geo?.moniker) ?? safeStr(meta?.moniker) ?? safeStr(geo?.name) ?? safeStr(meta?.name);
+        
+        if (targetNodeId) {
+          epochEntry = epochData.find((v: any) => safeStr(v?.node_id) === targetNodeId);
+        }
+        
+        if (!epochEntry && targetMoniker) {
+          epochEntry = epochData.find((v: any) => {
+            const eMoniker = safeStr(v?.moniker) ?? safeStr(v?.name);
+            return eMoniker && eMoniker.toLowerCase() === targetMoniker.toLowerCase();
+          });
+        }
+      }
 
       const merged = { ...epochEntry, ...meta, ...geo };
       const extracted = extractGeo(merged);
@@ -386,6 +445,26 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const nodeId = safeStr(merged?.node_id);
       const secp = normalizeSecp(merged) ?? safeStr(merged?.auth_address) ?? undefined;
       const bls = safeStr(merged?.bls);
+      
+      // Debug Luganodes specifically
+      const displayName = safeStr(merged?.name) ?? safeStr(merged?.displayName) ?? safeStr(merged?.moniker) ?? `Validator #${id}`;
+      const isLuganodes = displayName.toLowerCase().includes('luganodes') || nodeId?.toLowerCase().includes('luganodes');
+      
+      if (isLuganodes && process.env.NODE_ENV === 'development') {
+        console.log(`[luganodes-debug] Found Luganodes:`);
+        console.log(`  id: ${id}, in activeIds: ${activeIds.has(id)}`);
+        console.log(`  displayName: ${displayName}`);
+        console.log(`  nodeId: ${nodeId}`);
+        console.log(`  secp: ${secp}`);
+        console.log(`  epochEntry matched: ${epochEntry ? 'YES' : 'NO (looked for ID, node_id, moniker)'}`);
+        if (epochEntry) {
+          console.log(`    epochEntry.validator_set_type: ${epochEntry.validator_set_type}`);
+          console.log(`    epochEntry.moniker: ${epochEntry.moniker}`);
+          console.log(`    epochEntry.node_id: ${epochEntry.node_id}`);
+        }
+        console.log(`  geo: ${geo ? 'YES' : 'NO'}`);
+        console.log(`  meta: ${meta ? 'YES' : 'NO'}`);
+      }
 
       return {
         id,
@@ -396,7 +475,7 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         city,
         provider,
         merged,
-        isActive: activeIds.has(id),
+        isActive: epochEntry ? isActive(epochEntry) : false,
       };
     })
   );
