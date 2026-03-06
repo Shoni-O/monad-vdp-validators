@@ -1,5 +1,6 @@
 // lib/getSnapshot.ts
 
+import { unstable_cache } from 'next/cache';
 import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/lib/types';
 import { buildCounts, scoreValidator } from '@/lib/scoring';
 
@@ -337,9 +338,11 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   enriched.sort((a, b) => b.scores.total - a.scores.total);
 
+  const generatedAt = new Date().toISOString();
+
   return {
     network,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     counts: {
       total: enriched.length,
       byCountry: counts.byCountry,
@@ -348,4 +351,14 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     },
     validators: enriched,
   };
+}
+
+const SNAPSHOT_CACHE_SECONDS = 600;
+
+export function getCachedSnapshot(network: Network): Promise<Snapshot> {
+  return unstable_cache(
+    async () => computeSnapshot(network),
+    [`snapshot-${network}`],
+    { revalidate: SNAPSHOT_CACHE_SECONDS }
+  )();
 }
