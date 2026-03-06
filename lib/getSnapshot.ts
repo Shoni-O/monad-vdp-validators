@@ -199,8 +199,7 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       return empty;
     }
 
-    const res = await fetch(`https://ipinfo.io/${ip}?token=${token}`, {
-      cache: 'no-store',
+    const res = await fetch(url, {
       next: { revalidate: 86400 },
     });
 
