@@ -12,8 +12,8 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  // Initialize with system preference (client default during hydration)
   const [theme, setTheme] = useState<Theme>('light');
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     // Get saved theme from localStorage or use system preference
@@ -29,8 +29,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setTheme(initial);
       document.documentElement.setAttribute('data-theme', initial);
     }
-    
-    setMounted(true);
   }, []);
 
   const toggleTheme = () => {
@@ -42,11 +40,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  // Prevent hydration mismatch
-  if (!mounted) {
-    return <>{children}</>;
-  }
-
+  // Always render the provider to prevent hydration mismatch
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
       {children}
