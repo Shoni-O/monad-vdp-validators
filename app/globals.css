@@ -12,8 +12,32 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Light mode (default) */
+html:not([data-theme="dark"]) {
+  --background: #faf8fc;
+  --foreground: #2d1b4e;
+  color-scheme: light;
+}
+
+/* Dark mode */
+html[data-theme="dark"] {
+  --background: #0f0a15;
+  --foreground: #f5f3f8;
+  color-scheme: dark;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  transition: background-color 200ms, color 200ms;
+}
+
+/* Dark mode tailwind support */
+@layer base {
+  @supports (selector(:has(*))) {
+    html[data-theme="dark"] {
+      color-scheme: dark;
+    }
+  }
 }

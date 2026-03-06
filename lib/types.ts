@@ -33,6 +33,7 @@ export type EnrichedValidator = {
   city?: string;
   provider?: string;
 
+  status: 'active' | 'inactive';
   scores: Scores;
 
   raw: {
@@ -46,6 +47,7 @@ export type Snapshot = {
   generatedAt: string;
   counts: {
     total: number;
+    active: number;
     byCountry: Record<string, number>;
     byCity: Record<string, number>;
     byProvider: Record<string, number>;

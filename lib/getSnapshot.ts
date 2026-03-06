@@ -185,7 +185,7 @@ function rowQuality(r: {
 }
 
 function buildEnrichedRow(
-  row: { id: number; nodeId?: string; secp?: string; bls?: string; country?: string; city?: string; provider?: string; merged: any },
+  row: { id: number; nodeId?: string; secp?: string; bls?: string; country?: string; city?: string; provider?: string; merged: any; isActive: boolean },
   counts: { byCountry: Record<string, number>; byCity: Record<string, number>; byProvider: Record<string, number> },
   gh: any
 ): EnrichedValidator {
@@ -210,6 +210,7 @@ function buildEnrichedRow(
     country: row.country ?? 'Unknown',
     city: row.city ?? 'Unknown',
     provider: row.provider ?? 'Unknown',
+    status: row.isActive ? 'active' : 'inactive',
     scores,
     raw: { gmonads: row.merged, github: gh ?? undefined },
   };
@@ -251,6 +252,14 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   const geolocData = (geolocs?.data ?? []) as any[];
   const metaData = (metadata?.data ?? []) as any[];
 
+  // Debug logging: raw data counts
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot-debug] Raw epoch validators: ${epochData.length}`);
+    console.log(`[snapshot-debug] Raw geolocations: ${geolocData.length}`);
+    console.log(`[snapshot-debug] Raw metadata: ${metaData.length}`);
+  }
+
+  // Create maps for lookup
   const byKeyGeo = new Map<number, any>();
   for (const g of geolocData) {
     const k = getNumericId(g);
@@ -261,6 +270,36 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   for (const m of metaData) {
     const k = getNumericId(m);
     if (typeof k === 'number') byKeyMeta.set(k, m);
+  }
+
+  // Create a set of active validator IDs from epoch
+  const activeIds = new Set<number>();
+  for (const v of epochData) {
+    const k = getNumericId(v);
+    if (typeof k === 'number' && isActive(v)) {
+      activeIds.add(k);
+    }
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot-debug] Active validators in epoch: ${activeIds.size}`);
+  }
+
+  // Collect all unique validator IDs from all sources
+  const allIds = new Set<number>();
+  for (const v of epochData) {
+    const k = getNumericId(v);
+    if (typeof k === 'number') allIds.add(k);
+  }
+  for (const id of byKeyGeo.keys()) {
+    allIds.add(id);
+  }
+  for (const id of byKeyMeta.keys()) {
+    allIds.add(id);
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[snapshot-debug] Total unique validator IDs: ${allIds.size}`);
   }
 
   const ipCache = new Map<string, IpGeo>();
@@ -315,16 +354,15 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     }
   }
 
-  const activeEpoch = epochData.filter(isActive);
-
+  // Process ALL validators (both active and inactive)
   const baseRowsRaw = await Promise.all(
-    activeEpoch.map(async (v: any) => {
-      const key = getNumericId(v);
+    Array.from(allIds).map(async (id: number) => {
+      // Merge data from all sources
+      const epochEntry = epochData.find((v: any) => getNumericId(v) === id);
+      const geo = byKeyGeo.get(id);
+      const meta = byKeyMeta.get(id);
 
-      const geo = typeof key === 'number' ? byKeyGeo.get(key) : undefined;
-      const meta = typeof key === 'number' ? byKeyMeta.get(key) : undefined;
-
-      const merged = { ...v, ...meta, ...geo };
+      const merged = { ...epochEntry, ...meta, ...geo };
       const extracted = extractGeo(merged);
 
       const ip = pickIp(merged);
@@ -336,12 +374,12 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const city = extracted.city ?? ipGeo.city;
       const provider = extracted.provider ?? ipGeo.provider;
 
-      const nodeId = safeStr(merged?.node_id) ?? safeStr(v?.node_id);
+      const nodeId = safeStr(merged?.node_id);
       const secp = normalizeSecp(merged) ?? safeStr(merged?.auth_address) ?? undefined;
-      const bls = safeStr(merged?.bls) ?? safeStr(v?.bls);
+      const bls = safeStr(merged?.bls);
 
       return {
-        id: typeof key === "number" ? key : typeof v?.id === "number" ? v.id : 0,
+        id,
         nodeId,
         secp,
         bls,
@@ -349,11 +387,19 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         city,
         provider,
         merged,
+        isActive: activeIds.has(id),
       };
     })
   );
 
   const baseRows = dedupeById(baseRowsRaw).filter((r) => r.id !== 0);
+  
+  if (process.env.NODE_ENV === 'development') {
+    const activeCount = baseRows.filter((r) => (r as any).isActive).length;
+    const inactiveCount = baseRows.length - activeCount;
+    console.log(`[snapshot-debug] After deduplication: ${baseRows.length} total (${activeCount} active, ${inactiveCount} inactive)`);
+  }
+
   const t2 = Date.now();
   if (process.env.NODE_ENV === 'development') {
     console.log(`[snapshot] baseRows + IP geo: ${t2 - t1}ms`);
@@ -369,10 +415,10 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     ? await Promise.all(
         baseRows.map(async (row) => {
           const gh = row.nodeId ? await getCachedValidatorInfo(network, row.nodeId) : null;
-          return buildEnrichedRow(row, counts, gh);
+          return buildEnrichedRow(row as any, counts, gh);
         })
       )
-    : baseRows.map((row) => buildEnrichedRow(row, counts, null));
+    : baseRows.map((row) => buildEnrichedRow(row as any, counts, null));
 
   const t3 = Date.now();
   if (process.env.NODE_ENV === 'development') {
@@ -381,9 +427,10 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   enriched.sort((a, b) => b.scores.total - a.scores.total);
 
+  const activeCount = enriched.filter((v) => v.status === 'active').length;
   const generatedAt = new Date().toISOString();
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[snapshot] total: ${Date.now() - t0}ms`);
+    console.log(`[snapshot] total: ${Date.now() - t0}ms - Final: ${enriched.length} validators (${activeCount} active)`);
   }
 
   return {
@@ -391,6 +438,7 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     generatedAt,
     counts: {
       total: enriched.length,
+      active: activeCount,
       byCountry: counts.byCountry,
       byCity: counts.byCity,
       byProvider: counts.byProvider,

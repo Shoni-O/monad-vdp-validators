@@ -26,13 +26,13 @@ export default function NetworkSwitch({
         href={url}
         className={`flex items-center gap-2 rounded-lg border-2 px-4 py-2.5 text-sm font-medium transition-colors ${
           isActive
-            ? 'border-purple-400 bg-purple-100 text-purple-900 shadow-sm'
-            : 'border-purple-200 bg-white text-purple-700 hover:border-purple-300 hover:bg-purple-50'
+            ? 'border-purple-400 bg-purple-100 text-purple-900 shadow-sm dark:border-purple-600 dark:bg-purple-900 dark:text-purple-100'
+            : 'border-purple-200 bg-white text-purple-700 hover:border-purple-300 hover:bg-purple-50 dark:border-purple-800 dark:bg-purple-950 dark:text-purple-300 dark:hover:border-purple-700 dark:hover:bg-purple-900'
         }`}
       >
         {isActive && (
           <span
-            className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500"
+            className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400"
             aria-hidden
           />
         )}
