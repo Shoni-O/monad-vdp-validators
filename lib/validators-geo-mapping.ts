@@ -10,9 +10,9 @@ export interface ValidatorGeoData {
 
 export const VALIDATOR_GEO_MAPPING: Record<string, ValidatorGeoData> = {
   "028986e40f8e9f39bf68fa5f2f8de58514b124a150261a340e13940d286c0c7317": {
-    country: "Test Country",
-    city: "Test City",
-    provider: "Test Provider"
+    country: "Canada",
+    city: "Montreal",
+    provider: "Leaseweb Canada Inc."
   }
 };
 

@@ -531,8 +531,8 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
                       !(provider_from_mapping || provider_from_extracted);
       const ipGeo = needsIp ? await geoFromIp(ip) : {};
 
-      const rawCountry = country_from_mapping ?? country_from_extracted ?? ipGeo.country;
-      const country = normalizeCountry(rawCountry);
+      // For country: trust mapped values as-is, but normalize API-sourced values
+      const country = country_from_mapping ?? normalizeCountry(country_from_extracted ?? ipGeo.country);
       const city = city_from_mapping ?? city_from_extracted ?? ipGeo.city;
       const provider = provider_from_mapping ?? provider_from_extracted ?? ipGeo.provider;
 
