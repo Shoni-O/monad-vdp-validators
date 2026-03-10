@@ -5,6 +5,7 @@ import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/l
 import { buildCounts, scoreValidator, hasMetadata } from '@/lib/scoring';
 import { normalizeCountry } from '@/lib/countries';
 import { lookupValidatorGeo } from '@/lib/validators-geo-mapping';
+import { getValidatorMetadata, updateValidatorMetadata, registerNewValidators } from '@/lib/registry/index';
 
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
@@ -509,13 +510,20 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const nodeId = safeStr(merged?.node_id);
       const address = safeStr(merged?.auth_address);
       
-      // Priority 1: Check local metadata mapping for geographic data
+      // Priority 1: Check persistent registry (for manually researched data)
+      const registryData = secp ? getValidatorMetadata(network, secp) : undefined;
+      
+      // Priority 2: Check local metadata mapping for geographic data (legacy)
       const mappedGeo = lookupValidatorGeo({ secp, nodeId, address });
       
-      // Priority 2: Extract from standard endpoints if not in mapping
+      // Priority 3: Extract from standard endpoints if not in registry/mapping
       const extracted = extractGeo(merged);
       
-      // Merge with priority: mapped > extracted
+      // Merge with priority: registry > mapped > extracted
+      const country_from_registry = registryData?.country;
+      const city_from_registry = registryData?.city;
+      const provider_from_registry = registryData?.provider;
+      
       const country_from_mapping = mappedGeo?.country;
       const city_from_mapping = mappedGeo?.city;
       const provider_from_mapping = mappedGeo?.provider;
@@ -524,17 +532,17 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const city_from_extracted = extracted?.city;
       const provider_from_extracted = extracted?.provider;
 
-      // Final resolution with priority: mapping > extracted > IP geo > unknown
+      // Final resolution with priority: registry > mapping > extracted > IP geo > unknown
       const ip = pickIp(merged);
-      const needsIp = !(country_from_mapping || country_from_extracted) ||
-                      !(city_from_mapping || city_from_extracted) ||
-                      !(provider_from_mapping || provider_from_extracted);
+      const needsIp = !(country_from_registry || country_from_mapping || country_from_extracted) ||
+                      !(city_from_registry || city_from_mapping || city_from_extracted) ||
+                      !(provider_from_registry || provider_from_mapping || provider_from_extracted);
       const ipGeo = needsIp ? await geoFromIp(ip) : {};
 
-      // For country: trust mapped values as-is, but normalize API-sourced values
-      const country = country_from_mapping ?? normalizeCountry(country_from_extracted ?? ipGeo.country);
-      const city = city_from_mapping ?? city_from_extracted ?? ipGeo.city;
-      const provider = provider_from_mapping ?? provider_from_extracted ?? ipGeo.provider;
+      // For country: trust registry/mapped values as-is, but normalize API-sourced values
+      const country = country_from_registry ?? country_from_mapping ?? normalizeCountry(country_from_extracted ?? ipGeo.country);
+      const city = city_from_registry ?? city_from_mapping ?? city_from_extracted ?? ipGeo.city;
+      const provider = provider_from_registry ?? provider_from_mapping ?? provider_from_extracted ?? ipGeo.provider;
 
       // nodeId is used for GitHub validator-info lookups
       // For epoch data: use node_id field
@@ -568,9 +576,9 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       // Debug any inactive validator to trace metadata enrichment
       if (!isActiveValidator && process.env.NODE_ENV === 'development') {
         const hasMetadataAtAll = !!(country || city || provider);
-        const countrySrc = country_from_mapping ? 'mapping' : (country_from_extracted ? 'extracted' : (ipGeo.country ? 'ip' : 'none'));
-        const citySrc = city_from_mapping ? 'mapping' : (city_from_extracted ? 'extracted' : (ipGeo.city ? 'ip' : 'none'));
-        const providerSrc = provider_from_mapping ? 'mapping' : (provider_from_extracted ? 'extracted' : (ipGeo.provider ? 'ip' : 'none'));
+        const countrySrc = country_from_registry ? 'registry' : (country_from_mapping ? 'mapping' : (country_from_extracted ? 'extracted' : (ipGeo.country ? 'ip' : 'none')));
+        const citySrc = city_from_registry ? 'registry' : (city_from_mapping ? 'mapping' : (city_from_extracted ? 'extracted' : (ipGeo.city ? 'ip' : 'none')));
+        const providerSrc = provider_from_registry ? 'registry' : (provider_from_mapping ? 'mapping' : (provider_from_extracted ? 'extracted' : (ipGeo.provider ? 'ip' : 'none')));
         
         if (id <= 10 || Math.random() < 0.05) { // Log first 10 and sample 5% of others
           console.log(`[enrichment-debug] INACTIVE validator ID ${id}: ${displayName}`);
@@ -658,6 +666,22 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         const moniker = safeStr(r.merged?.moniker) ?? 'N/A';
         console.log(`    ID ${r.id} [${inEpoch}] ${vstatus}: ${moniker}`);
       });
+    }
+  }
+
+  // Register any new validators discovered in this snapshot to the persistent registry
+  const newValidatorsForRegistry = baseRows
+    .filter((r: any) => r.secp && !getValidatorMetadata(network, r.secp))
+    .map((r: any) => ({
+      secp: r.secp,
+      name: safeStr(r.merged?.name),
+      website: safeStr(r.merged?.website),
+    }));
+  
+  if (newValidatorsForRegistry.length > 0) {
+    registerNewValidators(network, newValidatorsForRegistry);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[registry] Registered ${newValidatorsForRegistry.length} new validators`);
     }
   }
 
