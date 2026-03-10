@@ -4,6 +4,7 @@ const GITHUB_CACHE_SECONDS = 86400; // 24h - validator-info changes rarely
 import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/lib/types';
 import { buildCounts, scoreValidator, hasMetadata } from '@/lib/scoring';
 import { normalizeCountry } from '@/lib/countries';
+import { lookupValidatorGeo } from '@/lib/validators-geo-mapping';
 
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
@@ -304,6 +305,30 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     console.log(`[snapshot-debug] Validators in epoch: ${epochIds.size}`);
     console.log(`[snapshot-debug] Validators in geo: ${byKeyGeo.size}`);
     console.log(`[snapshot-debug] Validators in meta: ${byKeyMeta.size}`);
+    
+    // Show sample of first few validators in geo/meta to see structure
+    if (byKeyGeo.size > 0) {
+      const sampleGeoId = Array.from(byKeyGeo.keys())[0];
+      const sampleGeo = byKeyGeo.get(sampleGeoId);
+      console.log(`[snapshot-debug] Sample geo entry (ID ${sampleGeoId}):`, {
+        keys: Object.keys(sampleGeo).slice(0, 15),
+        country_code: sampleGeo?.country_code,
+        country: sampleGeo?.country,
+        city: sampleGeo?.city,
+      });
+    }
+    
+    if (byKeyMeta.size > 0) {
+      const sampleMetaId = Array.from(byKeyMeta.keys())[0];
+      const sampleMeta = byKeyMeta.get(sampleMetaId);
+      console.log(`[snapshot-debug] Sample meta entry (ID ${sampleMetaId}):`, {
+        keys: Object.keys(sampleMeta).slice(0, 15),
+        country: sampleMeta?.country,
+        country_code: sampleMeta?.country_code,
+        city: sampleMeta?.city,
+        provider: sampleMeta?.provider,
+      });
+    }
   }
 
   // Build a canonical records map for each epoch ID (handling duplicates)
@@ -478,19 +503,43 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       // Moniker matching for enrichment purposes only (display names, etc).
 
       const merged = { ...epochEntry, ...meta, ...geo };
+      
+      // Extract identifiers for lookups
+      const secp = normalizeSecp(merged) ?? safeStr(merged?.auth_address) ?? undefined;
+      const nodeId = safeStr(merged?.node_id);
+      const address = safeStr(merged?.auth_address);
+      
+      // Priority 1: Check local metadata mapping for geographic data
+      const mappedGeo = lookupValidatorGeo({ secp, nodeId, address });
+      
+      // Priority 2: Extract from standard endpoints if not in mapping
       const extracted = extractGeo(merged);
+      
+      // Merge with priority: mapped > extracted
+      const country_from_mapping = mappedGeo?.country;
+      const city_from_mapping = mappedGeo?.city;
+      const provider_from_mapping = mappedGeo?.provider;
+      
+      const country_from_extracted = extracted?.country;
+      const city_from_extracted = extracted?.city;
+      const provider_from_extracted = extracted?.provider;
 
+      // Final resolution with priority: mapping > extracted > IP geo > unknown
       const ip = pickIp(merged);
-      const needsIp = !extracted.country || !extracted.city || !extracted.provider;
+      const needsIp = !(country_from_mapping || country_from_extracted) ||
+                      !(city_from_mapping || city_from_extracted) ||
+                      !(provider_from_mapping || provider_from_extracted);
       const ipGeo = needsIp ? await geoFromIp(ip) : {};
 
-      const rawCountry = extracted.country ?? ipGeo.country;
+      const rawCountry = country_from_mapping ?? country_from_extracted ?? ipGeo.country;
       const country = normalizeCountry(rawCountry);
-      const city = extracted.city ?? ipGeo.city;
-      const provider = extracted.provider ?? ipGeo.provider;
+      const city = city_from_mapping ?? city_from_extracted ?? ipGeo.city;
+      const provider = provider_from_mapping ?? provider_from_extracted ?? ipGeo.provider;
 
-      const nodeId = safeStr(merged?.node_id);
-      const secp = normalizeSecp(merged) ?? safeStr(merged?.auth_address) ?? undefined;
+      // nodeId is used for GitHub validator-info lookups
+      // For epoch data: use node_id field
+      // For metadata-only validators: use secp field (same identifier)  
+      const nodeIdForGitHub = nodeId ?? secp;
       const bls = safeStr(merged?.bls);
       
       // Debug Luganodes specifically
@@ -498,13 +547,13 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       // Determine active status: only from activeIds (computed strictly from epoch data)
       const isActiveValidator = activeIds.has(id);
       
-      const isLuganodes = displayName.toLowerCase().includes('luganodes') || nodeId?.toLowerCase().includes('luganodes');
+      const isLuganodes = displayName.toLowerCase().includes('luganodes') || nodeIdForGitHub?.toLowerCase().includes('luganodes');
       
       if (isLuganodes && process.env.NODE_ENV === 'development') {
         console.log(`[luganodes-debug] Found Luganodes:`);
         console.log(`  id: ${id}, in activeIds: ${isActiveValidator}`);
         console.log(`  displayName: ${displayName}`);
-        console.log(`  nodeId: ${nodeId}`);
+        console.log(`  nodeId: ${nodeIdForGitHub}`);
         console.log(`  secp: ${secp}`);
         console.log(`  epochEntry exists: ${epochEntry ? 'YES' : 'NO'}`);
         if (epochEntry) {
@@ -516,9 +565,33 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
         console.log(`  meta: ${meta ? 'YES' : 'NO'}`);
       }
 
+      // Debug any inactive validator to trace metadata enrichment
+      if (!isActiveValidator && process.env.NODE_ENV === 'development') {
+        const hasMetadataAtAll = !!(country || city || provider);
+        const countrySrc = country_from_mapping ? 'mapping' : (country_from_extracted ? 'extracted' : (ipGeo.country ? 'ip' : 'none'));
+        const citySrc = city_from_mapping ? 'mapping' : (city_from_extracted ? 'extracted' : (ipGeo.city ? 'ip' : 'none'));
+        const providerSrc = provider_from_mapping ? 'mapping' : (provider_from_extracted ? 'extracted' : (ipGeo.provider ? 'ip' : 'none'));
+        
+        if (id <= 10 || Math.random() < 0.05) { // Log first 10 and sample 5% of others
+          console.log(`[enrichment-debug] INACTIVE validator ID ${id}: ${displayName}`);
+          console.log(`  Sources available: epoch=${!!epochEntry}, geo=${!!geo}, meta=${!!meta}`);
+          console.log(`  Mapped geo: country=${mappedGeo?.country}, city=${mappedGeo?.city}, provider=${mappedGeo?.provider}`);
+          console.log(`  Extracted geo: country=${country_from_extracted}, city=${city_from_extracted}, provider=${provider_from_extracted}`);
+          console.log(`  IP lookup performed: ${needsIp}, result: country=${ipGeo.country}, city=${ipGeo.city}, provider=${ipGeo.provider}`);
+          console.log(`  Final values: country=${country} (src:${countrySrc}), city=${city} (src:${citySrc}), provider=${provider} (src:${providerSrc})`);
+          console.log(`  Has any metadata: ${hasMetadataAtAll}`);
+          if (meta) {
+            console.log(`  Meta entry keys: ${Object.keys(meta).slice(0, 10).join(', ')}`);
+          }
+          if (geo) {
+            console.log(`  Geo entry keys: ${Object.keys(geo).slice(0, 10).join(', ')}`);
+          }
+        }
+      }
+
       return {
         id,
-        nodeId,
+        nodeId: nodeIdForGitHub,
         secp,
         bls,
         country,
@@ -549,6 +622,34 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
     console.log(`  - From epoch (marked inactive): ${inactiveInEpoch.length}`);
     console.log(`  - From geo/meta (not in epoch): ${inactiveNotInEpoch.length}`);
     
+    // Check which inactive validators have metadata
+    const inactiveWithoutMetadata = inactiveRows.filter((r: any) => !r.country && !r.city && !r.provider);
+    const inactiveWithMetadata = inactiveRows.filter((r: any) => !!(r.country || r.city || r.provider));
+    
+    console.log(`[snapshot-debug] Inactive metadata status:`);
+    console.log(`  - With metadata: ${inactiveWithMetadata.length}`);
+    console.log(`  - WITHOUT metadata: ${inactiveWithoutMetadata.length}`);
+    
+    if (inactiveWithoutMetadata.length > 0 && inactiveWithoutMetadata.length <= 20) {
+      console.log(`[snapshot-debug] Inactive validators WITHOUT metadata:`);
+      inactiveWithoutMetadata.slice(0, 10).forEach((r: any) => {
+        const inEpoch = epochIds.has(r.id) ? 'IN_EPOCH' : 'geo/meta-only';
+        const hasMeta = byKeyMeta.has(r.id) ? 'meta-available' : 'meta-missing';
+        const hasGeo = byKeyGeo.has(r.id) ? 'geo-available' : 'geo-missing';
+        const moniker = safeStr(r.merged?.moniker) ?? 'N/A';
+        console.log(`    ID ${r.id} [${inEpoch}] ${hasMeta} ${hasGeo}: ${moniker}`);
+      });
+    }
+    
+    if (inactiveWithMetadata.length > 0 && inactiveWithMetadata.length <= 20) {
+      console.log(`[snapshot-debug] First inactive validators WITH metadata (should work):`);
+      inactiveWithMetadata.slice(0, 5).forEach((r: any) => {
+        const inEpoch = epochIds.has(r.id) ? 'IN_EPOCH' : 'geo/meta-only';
+        const moniker = safeStr(r.merged?.moniker) ?? 'N/A';
+        console.log(`    ID ${r.id} [${inEpoch}] ${r.country} / ${r.city} / ${r.provider}: ${moniker}`);
+      });
+    }
+    
     if (inactiveRows.length > 0 && inactiveRows.length <= 50) {
       console.log(`[snapshot-debug] First 10 inactive validators:`);
       inactiveRows.slice(0, 10).forEach((r: any) => {
@@ -567,9 +668,10 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   const counts = buildCounts(baseRows);
 
-  // GitHub enrichment: skip to keep first render fast. All data has gmonads fallbacks.
-  // Set to true to fetch GitHub (cached 24h per validator) - slows first load.
-  const useGitHubEnrichment = process.env.ENABLE_GITHUB_ENRICHMENT === 'true';
+  // GitHub enrichment: fetch validator-info including country/city/provider for all validators
+  // Results are cached 24h per validator, so performance impact is minimal after first load.
+  // This is essential for inactive validators which don't have geo data from gmonads.
+  const useGitHubEnrichment = true; // Always enabled for complete metadata enrichment
 
   const enriched: EnrichedValidator[] = useGitHubEnrichment
     ? await Promise.all(
