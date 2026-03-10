@@ -22,12 +22,28 @@ function computeBadge(total: number): Badge {
   return 'saturated';
 }
 
+/**
+ * Check if a validator has actual metadata (at least one real field)
+ */
+export function hasMetadata(item: { country?: string; city?: string; provider?: string }): boolean {
+  return !!(item.country || item.city || item.provider);
+}
+
+/**
+ * Build counts from validators that have metadata
+ * Validators without any metadata are excluded from counts
+ */
 export function buildCounts(items: Array<{ country?: string; city?: string; provider?: string }>) {
   const byCountry: Record<string, number> = {};
   const byCity: Record<string, number> = {};
   const byProvider: Record<string, number> = {};
 
   for (const it of items) {
+    // Skip validators with no metadata
+    if (!hasMetadata(it)) {
+      continue;
+    }
+
     const c = safeKey(it.country);
     const city = safeKey(it.city);
     const p = safeKey(it.provider);
@@ -50,6 +66,16 @@ export function scoreValidator(params: {
     byProvider: Record<string, number>;
   };
 }): Scores {
+  // If validator has no metadata, return insufficient-data badge
+  if (!hasMetadata(params)) {
+    return {
+      geo: 0,
+      provider: 0,
+      total: 0,
+      badge: 'insufficient-data',
+    };
+  }
+
   const countryKey = safeKey(params.country);
   const cityKey = safeKey(params.city);
   const providerKey = safeKey(params.provider);

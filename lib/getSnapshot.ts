@@ -1,10 +1,8 @@
-// lib/getSnapshot.ts
-
 import { unstable_cache } from 'next/cache';
 
 const GITHUB_CACHE_SECONDS = 86400; // 24h - validator-info changes rarely
 import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/lib/types';
-import { buildCounts, scoreValidator } from '@/lib/scoring';
+import { buildCounts, scoreValidator, hasMetadata } from '@/lib/scoring';
 import { normalizeCountry } from '@/lib/countries';
 
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
@@ -204,6 +202,15 @@ function buildEnrichedRow(
   gh: any
 ): EnrichedValidator {
   const displayName = safeStr(gh?.name) ?? makeDisplayName(row.merged, row.id);
+  
+  // Determine if validator has any metadata
+  const hasData = hasMetadata(row);
+  
+  // Use "No data" for validators with no metadata, otherwise use "Unknown" for missing fields
+  const country = hasData ? (row.country ?? 'Unknown') : 'No data';
+  const city = hasData ? (row.city ?? 'Unknown') : 'No data';
+  const provider = hasData ? (row.provider ?? 'Unknown') : 'No data';
+  
   const scores = scoreValidator({
     country: row.country,
     city: row.city,
@@ -221,9 +228,9 @@ function buildEnrichedRow(
     description: safeStr(gh?.description) ?? safeStr(row.merged?.description),
     logo: safeStr(gh?.logo) ?? safeStr(row.merged?.logo),
     x: safeStr(gh?.x) ?? safeStr(row.merged?.x),
-    country: row.country ?? 'Unknown',
-    city: row.city ?? 'Unknown',
-    provider: row.provider ?? 'Unknown',
+    country,
+    city,
+    provider,
     status: row.isActive ? 'active' : 'inactive',
     scores,
     raw: { gmonads: row.merged, github: gh ?? undefined },

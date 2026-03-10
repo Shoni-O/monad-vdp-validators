@@ -1,6 +1,6 @@
 export type Network = 'testnet' | 'mainnet';
 
-export type Badge = 'unique' | 'ok' | 'saturated';
+export type Badge = 'unique' | 'ok' | 'saturated' | 'insufficient-data';
 
 export type Scores = {
   geo: number;

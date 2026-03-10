@@ -90,12 +90,14 @@ total = 48×0.55 + 51×0.45 ≈ 26.4 + 23.0 ≈ 49 → badge: saturated`}
       </section>
 
       <section>
-        <h2 className="mb-2 text-lg font-medium text-purple-800 dark:text-purple-200">Unknown values</h2>
-        <p className="text-purple-800 dark:text-purple-200">
-          Missing country, city, or provider is treated as &quot;Unknown&quot; and counted
-          as a single shared value. Validators with Unknown in multiple fields typically
-          receive lower scores because many validators may share the same Unknown bucket.
+        <h2 className="mb-2 text-lg font-medium text-purple-800 dark:text-purple-200">Missing metadata handling</h2>
+        <p className="mb-2 text-purple-800 dark:text-purple-200">
+          Validators are classified into two categories:
         </p>
+        <ul className="list-inside list-disc space-y-2 text-purple-800 dark:text-purple-200">
+          <li><strong>With metadata:</strong> Validators that have at least one of country, city, or provider. Missing individual fields within this group are marked as "Unknown" and included in diversity calculations.</li>
+          <li><strong>Without metadata:</strong> Validators with no country, city, or provider data at all. These are marked as "No data" and receive an "insufficient-data" badge with a score of 0, rather than being artificially saturated.</li>
+        </ul>
       </section>
 
       <footer className="pt-4">

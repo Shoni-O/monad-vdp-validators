@@ -12,8 +12,9 @@ export default function ScoreExplanation() {
       </p>
       <p className="text-purple-800 dark:text-purple-100">
         Badges reflect score tiers: <strong>unique</strong> (80+), <strong>ok</strong> (55–79),
-        and <strong>saturated</strong> (&lt;55). Values shown as &quot;Unknown&quot; when
-        data is missing. For formulas and a worked example, see{' '}
+        <strong>saturated</strong> (&lt;55), and <strong>insufficient-data</strong> (no metadata). 
+        Values shown as &quot;Unknown&quot; when a specific field is missing, or &quot;No data&quot; 
+        when no metadata is available. For formulas and a worked example, see{' '}
         <Link href="/methodology" className="font-medium text-purple-600 underline hover:text-purple-900 dark:text-purple-300 dark:hover:text-purple-100">
           methodology
         </Link>
