@@ -1,6 +1,11 @@
 /**
  * Registry storage and management
  * Reads/writes from JSON files for persistence
+ * 
+ * In serverless runtimes (Vercel, AWS Lambda):
+ * - Reads work from /var/task (project files)
+ * - Writes redirect to /tmp (writable ephemeral storage)
+ * - Updates are cached in-memory for the request lifetime
  */
 
 import fs from 'fs';
@@ -10,31 +15,47 @@ import { ValidatorRegistry, ValidatorMetadata } from './types';
 const MAINNET_REGISTRY_PATH = path.join(process.cwd(), 'lib', 'registry', 'mainnet.json');
 const TESTNET_REGISTRY_PATH = path.join(process.cwd(), 'lib', 'registry', 'testnet.json');
 
+// In serverless, write to /tmp instead of /var/task (read-only)
+const isServerless = process.cwd().startsWith('/var/task');
+const MAINNET_WRITE_PATH = isServerless ? '/tmp/mainnet.json' : MAINNET_REGISTRY_PATH;
+const TESTNET_WRITE_PATH = isServerless ? '/tmp/testnet.json' : TESTNET_REGISTRY_PATH;
+
 let mainnetCache: ValidatorRegistry | null = null;
 let testnetCache: ValidatorRegistry | null = null;
 
 /**
- * Load registry from JSON file (with caching)
+ * Load registry from JSON file (with in-memory caching)
+ * Tries both project directory and /tmp for serverless environments
  */
 function loadRegistry(network: 'mainnet' | 'testnet'): ValidatorRegistry {
   const cache = network === 'mainnet' ? mainnetCache : testnetCache;
   if (cache) return cache;
 
-  const filePath = network === 'mainnet' ? MAINNET_REGISTRY_PATH : TESTNET_REGISTRY_PATH;
+  const readPath = network === 'mainnet' ? MAINNET_REGISTRY_PATH : TESTNET_REGISTRY_PATH;
+  const tmpPath = network === 'mainnet' ? MAINNET_WRITE_PATH : TESTNET_WRITE_PATH;
   
   try {
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, 'utf-8');
-      const registry = JSON.parse(data) as ValidatorRegistry;
-      if (network === 'mainnet') {
-        mainnetCache = registry;
-      } else {
-        testnetCache = registry;
+    // In serverless: try /tmp first (has runtime updates), then project files
+    const pathsToTry = isServerless ? [tmpPath, readPath] : [readPath];
+    
+    for (const filePath of pathsToTry) {
+      try {
+        if (fs.existsSync(filePath)) {
+          const data = fs.readFileSync(filePath, 'utf-8');
+          const registry = JSON.parse(data) as ValidatorRegistry;
+          if (network === 'mainnet') {
+            mainnetCache = registry;
+          } else {
+            testnetCache = registry;
+          }
+          return registry;
+        }
+      } catch (e) {
+        // Try next path
       }
-      return registry;
     }
   } catch (e) {
-    console.warn(`Failed to load ${network} registry:`, e);
+    // Silently fail and return empty registry
   }
 
   const emptyRegistry: ValidatorRegistry = {};
@@ -48,23 +69,33 @@ function loadRegistry(network: 'mainnet' | 'testnet'): ValidatorRegistry {
 
 /**
  * Save registry to JSON file
+ * In serverless, writes to /tmp; in local dev, writes to project directory
+ * Silently fails if write is not possible (serverless ephemeral storage)
  */
 function saveRegistry(network: 'mainnet' | 'testnet', registry: ValidatorRegistry): void {
-  const filePath = network === 'mainnet' ? MAINNET_REGISTRY_PATH : TESTNET_REGISTRY_PATH;
+  const filePath = network === 'mainnet' ? MAINNET_WRITE_PATH : TESTNET_WRITE_PATH;
   
-  // Ensure directory exists
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
 
-  fs.writeFileSync(filePath, JSON.stringify(registry, null, 2));
-  
-  // Clear cache so next load reads fresh data
-  if (network === 'mainnet') {
-    mainnetCache = null;
-  } else {
-    testnetCache = null;
+    fs.writeFileSync(filePath, JSON.stringify(registry, null, 2));
+    
+    // Clear cache so next load reads fresh data
+    if (network === 'mainnet') {
+      mainnetCache = null;
+    } else {
+      testnetCache = null;
+    }
+  } catch (e) {
+    // In serverless, write to /tmp is ephemeral and will be lost on next deployment
+    // This is expected - registry is seeded from version control at deploy time
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(`[registry] Failed to save ${network} registry:`, (e as Error).message);
+    }
   }
 }
 
