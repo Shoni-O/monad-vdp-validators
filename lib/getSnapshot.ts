@@ -721,9 +721,16 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   // Persist geo data from active validators to registry
   // This ensures inactive validators can fall back to last-known location/provider
-  const isReal = (x?: string) => x && x !== 'Unknown' && x !== 'No data';
+  const now = new Date().toISOString();
+const isReal = (x?: string) => !!x && x !== 'Unknown' && x !== 'No data';
 
-  const geoUpdates: GeoUpdate[] = validators
+const geoUpdates: Array<{
+    secp: string;
+    country?: string;
+    city?: string;
+    provider?: string;
+    lastSeenAt?: string;
+  }> = validators
     .filter(hasSecp)
     .map(v => ({
       secp: v.secp,
@@ -733,6 +740,11 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       lastSeenAt: now,
     }))
     .filter(u => u.country || u.city || u.provider);
+
+  // і далі
+  if (geoUpdates.length > 0) {
+    await updateValidatorGeoData(network, geoUpdates);
+  }
 
   return {
     network,
