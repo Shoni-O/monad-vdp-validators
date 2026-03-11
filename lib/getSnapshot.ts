@@ -721,22 +721,18 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
 
   // Persist geo data from active validators to registry
   // This ensures inactive validators can fall back to last-known location/provider
-  const geoUpdates = enriched
-    .filter((v) => v.status === 'active' && v.secp)
-    .map((v) => ({
-      secp: v.secp,
-      country: v.country,
-      city: v.city,
-      provider: v.provider,
-      lastSeenAt: generatedAt,
-    }));
+  const isReal = (x?: string) => x && x !== 'Unknown' && x !== 'No data';
 
-  if (geoUpdates.length > 0) {
-    updateValidatorGeoData(network, geoUpdates);
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[registry] Persisted geo data for ${geoUpdates.length} active validators`);
-    }
-  }
+  const geoUpdates: GeoUpdate[] = validators
+    .filter(hasSecp)
+    .map(v => ({
+      secp: v.secp,
+      country: isReal(v.country) ? v.country : undefined,
+      city: isReal(v.city) ? v.city : undefined,
+      provider: isReal(v.provider) ? v.provider : undefined,
+      lastSeenAt: now,
+    }))
+    .filter(u => u.country || u.city || u.provider);
 
   return {
     network,
