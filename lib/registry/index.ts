@@ -137,3 +137,58 @@ export function registerNewValidators(
     saveRegistry(network, registry);
   }
 }
+
+/**
+ * Batch update geo data for active validators from snapshot
+ * Only persists meaningful values (skips "Unknown", "No data", undefined)
+ * Merges with existing data without overwriting non-empty fields
+ */
+export function updateValidatorGeoData(
+  network: 'mainnet' | 'testnet',
+  validators: Array<{
+    secp: string;
+    country?: string;
+    city?: string;
+    provider?: string;
+    lastSeenAt?: string;
+  }>
+): void {
+  const registry = loadRegistry(network);
+  const now = new Date().toISOString();
+  let updated = false;
+
+  for (const v of validators) {
+    if (!v.secp) continue;
+
+    const secp = v.secp.toLowerCase();
+    const existing = registry[secp] || { secp, discoveredAt: now };
+
+    // Helper: check if a value is "real" (not empty, not "Unknown", not "No data")
+    const isRealValue = (val?: string): boolean => {
+      if (!val || typeof val !== 'string') return false;
+      const trimmed = val.trim();
+      return trimmed.length > 0 && trimmed !== 'Unknown' && trimmed !== 'No data';
+    };
+
+    // Only merge in geo fields if they have real values
+    const updates: Partial<ValidatorMetadata> = {};
+    if (isRealValue(v.country)) updates.country = v.country;
+    if (isRealValue(v.city)) updates.city = v.city;
+    if (isRealValue(v.provider)) updates.provider = v.provider;
+
+    // Only update if we have at least one real value to add
+    if (Object.keys(updates).length > 0) {
+      registry[secp] = {
+        ...existing,
+        ...updates,
+        lastSeenAt: v.lastSeenAt || now,
+        updatedAt: now,
+      } as ValidatorMetadata;
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    saveRegistry(network, registry);
+  }
+}

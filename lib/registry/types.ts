@@ -28,6 +28,7 @@ export interface ValidatorMetadata {
   // Tracking
   discoveredAt: string;
   updatedAt: string;
+  lastSeenAt?: string; // When validator was last active
 }
 
 /**

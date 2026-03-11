@@ -5,7 +5,7 @@ import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/l
 import { buildCounts, scoreValidator, hasMetadata } from '@/lib/scoring';
 import { normalizeCountry } from '@/lib/countries';
 import { lookupValidatorGeo } from '@/lib/validators-geo-mapping';
-import { getValidatorMetadata, updateValidatorMetadata, registerNewValidators } from '@/lib/registry/index';
+import { getValidatorMetadata, updateValidatorMetadata, registerNewValidators, updateValidatorGeoData } from '@/lib/registry/index';
 
 const GMONADS_BASE = 'https://www.gmonads.com/api/v1/public';
 
@@ -717,6 +717,25 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
   const generatedAt = new Date().toISOString();
   if (process.env.NODE_ENV === 'development') {
     console.log(`[snapshot] total: ${Date.now() - t0}ms - Final: ${enriched.length} validators (${activeCount} active)`);
+  }
+
+  // Persist geo data from active validators to registry
+  // This ensures inactive validators can fall back to last-known location/provider
+  const geoUpdates = enriched
+    .filter((v) => v.status === 'active' && v.secp)
+    .map((v) => ({
+      secp: v.secp,
+      country: v.country,
+      city: v.city,
+      provider: v.provider,
+      lastSeenAt: generatedAt,
+    }));
+
+  if (geoUpdates.length > 0) {
+    updateValidatorGeoData(network, geoUpdates);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[registry] Persisted geo data for ${geoUpdates.length} active validators`);
+    }
   }
 
   return {
