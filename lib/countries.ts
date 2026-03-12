@@ -150,3 +150,45 @@ export function normalizeCountry(value?: string | null): string {
 
   return 'Unknown';
 }
+
+/**
+ * Conservative whitelist mapping of known Netherlands cities to country.
+ * Used as a fallback when city is known but country is missing/unknown.
+ * Intentionally limited to a small set of cities we've verified are in Netherlands.
+ * This prevents false positives from cities that might exist in multiple countries.
+ */
+const NETHERLANDS_CITIES_WHITELIST = new Set<string>([
+  'Amsterdam',
+  'Lelystad',
+  'Soest',
+  'Rotterdam',
+  'The Hague',
+  'Den Haag', // Dutch name for The Hague
+  'Utrecht',
+  'Groningen',
+  'Eindhoven',
+  'Tilburg',
+]);
+
+/**
+ * Resolve country from city when country data is missing.
+ * Only supports a small whitelist of known Netherlands cities to avoid false positives.
+ * Returns the country if the city is recognized, otherwise returns undefined.
+ *
+ * Use case: When a validator has city data (e.g., "Lelystad") but no country code,
+ * this mapping provides a safe fallback to "Netherlands" without ambiguity.
+ */
+export function resolveCountryFromCity(city?: string | null): string | undefined {
+  if (!city) return undefined;
+
+  const normalized = city.trim();
+  if (!normalized) return undefined;
+
+  // Check if this city is in our Netherlands whitelist
+  if (NETHERLANDS_CITIES_WHITELIST.has(normalized)) {
+    return 'Netherlands';
+  }
+
+  // No recognized city match, return undefined
+  return undefined;
+}

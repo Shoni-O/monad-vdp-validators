@@ -3,7 +3,7 @@ import { unstable_cache } from 'next/cache';
 const GITHUB_CACHE_SECONDS = 86400; // 24h - validator-info changes rarely
 import type { Network, Snapshot, GmonadsValidator, EnrichedValidator } from '@/lib/types';
 import { buildCounts, scoreValidator, hasMetadata } from '@/lib/scoring';
-import { normalizeCountry } from '@/lib/countries';
+import { normalizeCountry, resolveCountryFromCity } from '@/lib/countries';
 import { lookupValidatorGeo } from '@/lib/validators-geo-mapping';
 import { getValidatorMetadata, updateValidatorMetadata, registerNewValidators, updateValidatorGeoData } from '@/lib/registry/index';
 
@@ -540,9 +540,18 @@ export async function computeSnapshot(network: Network): Promise<Snapshot> {
       const ipGeo = needsIp ? await geoFromIp(ip) : {};
 
       // For country: trust registry/mapped values as-is, but normalize API-sourced values
-      const country = country_from_registry ?? country_from_mapping ?? normalizeCountry(country_from_extracted ?? ipGeo.country);
+      let country = country_from_registry ?? country_from_mapping ?? normalizeCountry(country_from_extracted ?? ipGeo.country);
       const city = city_from_registry ?? city_from_mapping ?? city_from_extracted ?? ipGeo.city;
       const provider = provider_from_registry ?? provider_from_mapping ?? provider_from_extracted ?? ipGeo.provider;
+
+      // Fallback: If country is Unknown but city is known, try to infer country from city
+      // This handles cases like Lelystad with no country code but city is present
+      if (country === 'Unknown' && city && city !== 'Unknown' && city !== 'No data') {
+        const countryFromCity = resolveCountryFromCity(city);
+        if (countryFromCity) {
+          country = countryFromCity;
+        }
+      }
 
       // nodeId is used for GitHub validator-info lookups
       // For epoch data: use node_id field
