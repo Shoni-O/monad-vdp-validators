@@ -55,15 +55,69 @@ const CODE_TO_NAME: Record<string, string> = {
   UK: 'United Kingdom',
 };
 
+/**
+ * ISO 3166-1 alpha-3 country code to ISO 2 letter code.
+ * Supports 3-letter codes from various APIs (ipinfo, maxmind, etc.)
+ */
+const CODE_ALPHA3_TO_ALPHA2: Record<string, string> = {
+  ABW: 'AW', AFG: 'AF', AGO: 'AO', AIA: 'AI', ALA: 'AX', ALB: 'AL', AND: 'AD', ARE: 'AE',
+  ARG: 'AR', ARM: 'AM', ASM: 'AS', ATA: 'AQ', ATF: 'TF', ATG: 'AG', AUS: 'AU', AUT: 'AT',
+  AZE: 'AZ', BDI: 'BI', BEL: 'BE', BEN: 'BJ', BES: 'BQ', BFA: 'BF', BGD: 'BD', BGR: 'BG',
+  BHR: 'BH', BHS: 'BS', BIH: 'BA', BLM: 'BL', BLR: 'BY', BLZ: 'BZ', BMU: 'BM', BOL: 'BO',
+  BRA: 'BR', BRB: 'BB', BRN: 'BN', BTN: 'BT', BVT: 'BV', BWA: 'BW', CAF: 'CF', CAN: 'CA',
+  CCK: 'CC', CHE: 'CH', CHL: 'CL', CHN: 'CN', CIV: 'CI', CMR: 'CM', COD: 'CD', COG: 'CG',
+  COK: 'CK', COL: 'CO', COM: 'KM', CPV: 'CV', CRI: 'CR', CUB: 'CU', CUW: 'CW', CXR: 'CX',
+  CYM: 'KY', CYP: 'CY', CZE: 'CZ', DEU: 'DE', DJI: 'DJ', DMA: 'DM', DNK: 'DK', DOM: 'DO',
+  DZA: 'DZ', ECU: 'EC', EGY: 'EG', ERI: 'ER', ESH: 'EH', ESP: 'ES', EST: 'EE', ETH: 'ET',
+  FIN: 'FI', FJI: 'FJ', FLK: 'FK', FRA: 'FR', FRO: 'FO', FSM: 'FM', GAB: 'GA', GBR: 'GB',
+  GEO: 'GE', GGY: 'GG', GHA: 'GH', GIB: 'GI', GIN: 'GN', GLP: 'GP', GMB: 'GM', GNB: 'GW',
+  GNQ: 'GQ', GRC: 'GR', GRD: 'GD', GRL: 'GL', GTM: 'GT', GUF: 'GF', GUM: 'GU', GUY: 'GY',
+  HKG: 'HK', HMD: 'HM', HND: 'HN', HRV: 'HR', HTI: 'HT', HUN: 'HU', IDN: 'ID', IMN: 'IM',
+  IND: 'IN', IOT: 'IO', IRL: 'IE', IRN: 'IR', IRQ: 'IQ', ISL: 'IS', ISR: 'IL', ITA: 'IT',
+  JAM: 'JM', JEY: 'JE', JOR: 'JO', JPN: 'JP', KAZ: 'KZ', KEN: 'KE', KGZ: 'KG', KHM: 'KH',
+  KIR: 'KI', KNA: 'KN', KOR: 'KR', KWT: 'KW', LAO: 'LA', LBN: 'LB', LBR: 'LR', LBY: 'LY',
+  LCA: 'LC', LIE: 'LI', LKA: 'LK', LSO: 'LS', LTU: 'LT', LUX: 'LU', LVA: 'LV', MAC: 'MO',
+  MAF: 'MF', MAR: 'MA', MCO: 'MC', MDA: 'MD', MDG: 'MG', MDV: 'MV', MEX: 'MX', MHL: 'MH',
+  MKD: 'MK', MLI: 'ML', MLT: 'MT', MMR: 'MM', MNE: 'ME', MNG: 'MN', MNP: 'MP', MOZ: 'MZ',
+  MRT: 'MR', MSR: 'MS', MTQ: 'MQ', MUS: 'MU', MWI: 'MW', MYS: 'MY', MYT: 'YT', NAM: 'NA',
+  NCL: 'NC', NER: 'NE', NFK: 'NF', NGA: 'NG', NIC: 'NI', NIU: 'NU', NLD: 'NL', NOR: 'NO',
+  NPL: 'NP', NRU: 'NR', NZL: 'NZ', OMN: 'OM', PAK: 'PK', PAN: 'PA', PCN: 'PN', PER: 'PE',
+  PHL: 'PH', PLW: 'PW', PNG: 'PG', POL: 'PL', PRI: 'PR', PRK: 'KP', PRT: 'PT', PRY: 'PY',
+  PSE: 'PS', PYF: 'PF', QAT: 'QA', REU: 'RE', ROU: 'RO', RUS: 'RU', RWA: 'RW', SAU: 'SA',
+  SDN: 'SD', SEN: 'SN', SGP: 'SG', SGS: 'GS', SHN: 'SH', SJM: 'SJ', SLB: 'SB', SLE: 'SL',
+  SLV: 'SV', SMR: 'SM', SOM: 'SO', SPM: 'PM', SRB: 'RS', SSD: 'SS', STP: 'ST', SUR: 'SR',
+  SVK: 'SK', SVN: 'SI', SWE: 'SE', SWZ: 'SZ', SXM: 'SX', SYC: 'SC', SYR: 'SY', TCA: 'TC',
+  TCD: 'TD', TGO: 'TG', THA: 'TH', TJK: 'TJ', TKL: 'TK', TKM: 'TM', TLS: 'TL', TON: 'TO',
+  TTO: 'TT', TUN: 'TN', TUR: 'TR', TUV: 'TV', TWN: 'TW', TZA: 'TZ', UGA: 'UG', UKR: 'UA',
+  UMI: 'UM', URY: 'UY', USA: 'US', UZB: 'UZ', VAT: 'VA', VCT: 'VC', VEN: 'VE', VGB: 'VG',
+  VIR: 'VI', VNM: 'VN', VUT: 'VU', WLF: 'WF', WSM: 'WS', YEM: 'YE', ZAF: 'ZA', ZMB: 'ZM',
+  ZWE: 'ZW', XKX: 'XK',
+};
+
 const NAME_TO_CANONICAL = new Map<string, string>();
 for (const name of Object.values(CODE_TO_NAME)) {
   NAME_TO_CANONICAL.set(name.toLowerCase(), name);
 }
 
 /**
+ * Additional country name variants that should map to canonical forms.
+ * Handles alternative names, common misspellings, and regional variants.
+ */
+const VARIANT_TO_CANONICAL = new Map<string, string>([
+  // Netherlands variants
+  ['the netherlands', 'Netherlands'],
+  ['holland', 'Netherlands'],
+  ['dutch', 'Netherlands'],
+]);
+
+/**
  * Normalizes a country value to a full English country name.
- * - 2-letter ISO code (e.g. DE, FR) -> full name (Germany, France)
- * - Full name (e.g. Germany, France) -> canonical form
+ * Robust normalization supporting:
+ * - 2-letter ISO code (e.g. DE, FR, NL) -> full name (Germany, France, Netherlands)
+ * - 3-letter ISO code (e.g. DEU, FRA, NLD) -> full name
+ * - Full name (e.g. Germany, France, Netherlands) -> canonical form
+ * - Name variants (e.g. "The Netherlands", Holland) -> canonical form
+ * - Case-insensitive and whitespace-tolerant
  * - Empty or unmapped -> Unknown
  */
 export function normalizeCountry(value?: string | null): string {
@@ -71,11 +125,27 @@ export function normalizeCountry(value?: string | null): string {
   if (!s) return 'Unknown';
 
   const upper = s.toUpperCase();
+  const lower = s.toLowerCase();
+
+  // Try 2-letter ISO code
   if (s.length === 2 && upper in CODE_TO_NAME) {
     return CODE_TO_NAME[upper];
   }
 
-  const canonical = NAME_TO_CANONICAL.get(s.toLowerCase());
+  // Try 3-letter ISO code
+  if (s.length === 3 && upper in CODE_ALPHA3_TO_ALPHA2) {
+    const alpha2 = CODE_ALPHA3_TO_ALPHA2[upper];
+    return CODE_TO_NAME[alpha2];
+  }
+
+  // Try variant mappings (e.g. "The Netherlands" -> "Netherlands")
+  if (lower in Object.fromEntries(VARIANT_TO_CANONICAL)) {
+    const canonical = VARIANT_TO_CANONICAL.get(lower)!;
+    return canonical;
+  }
+
+  // Try canonical name lookup
+  const canonical = NAME_TO_CANONICAL.get(lower);
   if (canonical) return canonical;
 
   return 'Unknown';
