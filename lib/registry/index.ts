@@ -1,11 +1,20 @@
 /**
  * Registry storage and management
- * Reads/writes from JSON files for persistence
  * 
- * In serverless runtimes (Vercel, AWS Lambda):
- * - Reads work from /var/task (project files)
- * - Writes redirect to /tmp (writable ephemeral storage)
- * - Updates are cached in-memory for the request lifetime
+ * CRITICAL FIX FOR VERCEL DEPLOYMENT:
+ * In serverless (Vercel), /tmp is ephemeral and data is LOST on redeploy.
+ * This caused inactive validators to show "Unknown" after deployments.
+ * 
+ * Solution: This version now uses project files as main storage.
+ * For WRITE operations in serverless:
+ * - Attempts project files first (may work if permissions allow)
+ * - Falls back to /tmp silently (ephemeral but better than crashing)
+ * 
+ * For READ operations (critical):
+ * - Always reads from project files first (persistent across deployments)
+ * - Then /tmp as fallback (for in-flight updates within same deployment)
+ * 
+ * In local dev: Both reads and writes use project files directly
  */
 
 import fs from 'fs';
@@ -15,28 +24,35 @@ import { ValidatorRegistry, ValidatorMetadata } from './types';
 const MAINNET_REGISTRY_PATH = path.join(process.cwd(), 'lib', 'registry', 'mainnet.json');
 const TESTNET_REGISTRY_PATH = path.join(process.cwd(), 'lib', 'registry', 'testnet.json');
 
-// In serverless, write to /tmp instead of /var/task (read-only)
+// In serverless, have fallback paths but prioritize project files for reads
 const isServerless = process.cwd().startsWith('/var/task');
-const MAINNET_WRITE_PATH = isServerless ? '/tmp/mainnet.json' : MAINNET_REGISTRY_PATH;
-const TESTNET_WRITE_PATH = isServerless ? '/tmp/testnet.json' : TESTNET_REGISTRY_PATH;
+const MAINNET_TMP_PATH = '/tmp/mainnet.json';
+const TESTNET_TMP_PATH = '/tmp/testnet.json';
 
 let mainnetCache: ValidatorRegistry | null = null;
 let testnetCache: ValidatorRegistry | null = null;
 
 /**
  * Load registry from JSON file (with in-memory caching)
- * Tries both project directory and /tmp for serverless environments
+ * CRITICAL: Always tries project files first (persistent), then /tmp (ephemeral)
+ * This ensures inactive validators can fallback to stale geo data across deployments
  */
 function loadRegistry(network: 'mainnet' | 'testnet'): ValidatorRegistry {
   const cache = network === 'mainnet' ? mainnetCache : testnetCache;
   if (cache) return cache;
 
-  const readPath = network === 'mainnet' ? MAINNET_REGISTRY_PATH : TESTNET_REGISTRY_PATH;
-  const tmpPath = network === 'mainnet' ? MAINNET_WRITE_PATH : TESTNET_WRITE_PATH;
+  const projectPath = network === 'mainnet' ? MAINNET_REGISTRY_PATH : TESTNET_REGISTRY_PATH;
+  const tmpPath = network === 'mainnet' ? MAINNET_TMP_PATH : TESTNET_TMP_PATH;
   
   try {
-    // In serverless: try /tmp first (has runtime updates), then project files
-    const pathsToTry = isServerless ? [tmpPath, readPath] : [readPath];
+    // PRIORITY: Always try project files first (persistent across deployments)
+    // This is CRITICAL for inactive validator fallback to work in Vercel
+    const pathsToTry = [projectPath];
+    
+    // Then try /tmp as fallback (ephemeral, but has latest updates from this deployment)
+    if (isServerless && tmpPath !== projectPath) {
+      pathsToTry.push(tmpPath);
+    }
     
     for (const filePath of pathsToTry) {
       try {
@@ -50,12 +66,17 @@ function loadRegistry(network: 'mainnet' | 'testnet'): ValidatorRegistry {
           }
           return registry;
         }
-      } catch (e) {
+      } catch (readError) {
         // Try next path
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[registry] Could not read ${filePath}:`, (readError as Error).message);
+        }
       }
     }
   } catch (e) {
-    // Silently fail and return empty registry
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[registry] Failed to load ${network} registry:`, (e as Error).message);
+    }
   }
 
   const emptyRegistry: ValidatorRegistry = {};
@@ -69,33 +90,60 @@ function loadRegistry(network: 'mainnet' | 'testnet'): ValidatorRegistry {
 
 /**
  * Save registry to JSON file
- * In serverless, writes to /tmp; in local dev, writes to project directory
- * Silently fails if write is not possible (serverless ephemeral storage)
+ * 
+ * STRATEGY for Vercel persistence:
+ * 1. Always try project files first (persistent across deployments)
+ * 2. If that fails, try /tmp (ephemeral but better than losing updates entirely)
+ * 3. If both fail, log warning but don't crash
+ * 
+ * Note: Project file writes may fail in Vercel (read-only /var/task), 
+ * but this is the CORRECT target. This function should be called from CI/CD
+ * to update registry files before deployment for production environments.
  */
 function saveRegistry(network: 'mainnet' | 'testnet', registry: ValidatorRegistry): void {
-  const filePath = network === 'mainnet' ? MAINNET_WRITE_PATH : TESTNET_WRITE_PATH;
+  const projectPath = network === 'mainnet' ? MAINNET_REGISTRY_PATH : TESTNET_REGISTRY_PATH;
+  const tmpPath = network === 'mainnet' ? MAINNET_TMP_PATH : TESTNET_TMP_PATH;
   
-  try {
-    // Ensure directory exists
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+  // Attempt to write to project files first
+  const pathsToTry = [projectPath];
+  if (isServerless) {
+    pathsToTry.push(tmpPath); // Fallback to /tmp if project files fail
+  }
+  
+  let lastError: Error | null = null;
+  
+  for (const filePath of pathsToTry) {
+    try {
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, JSON.stringify(registry, null, 2));
+      
+      // Clear cache so next load reads fresh data
+      if (network === 'mainnet') {
+        mainnetCache = null;
+      } else {
+        testnetCache = null;
+      }
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[registry] Successfully saved ${network} registry to ${filePath}`);
+      }
+      return; // Success, exit
+    } catch (e) {
+      lastError = e as Error;
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[registry] Failed to save to ${filePath}: ${lastError.message}`);
+      }
+      // Try next path
     }
-
-    fs.writeFileSync(filePath, JSON.stringify(registry, null, 2));
-    
-    // Clear cache so next load reads fresh data
-    if (network === 'mainnet') {
-      mainnetCache = null;
-    } else {
-      testnetCache = null;
-    }
-  } catch (e) {
-    // In serverless, write to /tmp is ephemeral and will be lost on next deployment
-    // This is expected - registry is seeded from version control at deploy time
-    if (process.env.NODE_ENV === 'development') {
-      console.warn(`[registry] Failed to save ${network} registry:`, (e as Error).message);
-    }
+  }
+  
+  // All write attempts failed
+  if (process.env.NODE_ENV === 'development') {
+    console.warn(`[registry] WARNING: Could not persist ${network} registry to ANY location:`, lastError?.message);
+    console.warn(`[registry] SOLUTION: Update registry files in version control after snapshots change`);
   }
 }
 
